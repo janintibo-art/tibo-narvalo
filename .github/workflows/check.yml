@@ -15,5 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check Godot project
-        run: godot --headless --path . --editor --quit
+      - name: Strict Godot check
+        run: |
+          godot --headless --path . --editor --quit > godot-check.log 2>&1 || {
+            cat godot-check.log
+            exit 1
+          }
+          cat godot-check.log
+          if grep -E -q "SCRIPT ERROR:|Parse Error:|Failed to load script|Cannot get class" godot-check.log; then
+            echo "Godot script errors detected."
+            exit 1
+          fi
