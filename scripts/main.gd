@@ -654,7 +654,7 @@ func _update_hud() -> void:
 	if health_hud == null:
 		return
 
-	var remaining := max(0, wave_total - wave_defeated)
+	var remaining: int = maxi(0, wave_total - wave_defeated)
 
 	health_hud.text = "%s / %s\nVIE %d   VAGUE %d   ACTIFS %d   RESTANTS %d" % [
 		selected_mode.to_upper(),
