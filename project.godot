@@ -3,6 +3,10 @@
 config/name="Tibo Narvalo"
 run/main_scene="res://scenes/Main.tscn"
 
+[autoload]
+
+GameFeedback="*res://scripts/game_feedback.gd"
+
 [display]
 
 window/size/viewport_width=1280
