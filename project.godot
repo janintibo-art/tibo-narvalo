@@ -6,6 +6,7 @@ run/main_scene="res://scenes/Main.tscn"
 [autoload]
 
 GameFeedback="*res://scripts/game_feedback.gd"
+BossDirector="*res://scripts/boss_director.gd"
 
 [display]
 
