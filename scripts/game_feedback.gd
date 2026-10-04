@@ -1,16 +1,24 @@
 extends Node
 
 var xr_camera: XRCamera3D
+var left_hand: XRController3D
+var right_hand: XRController3D
 var enemy_root: Node3D
 
 var alert_label: Label3D
 var score_label: Label3D
+var impact_label: Label3D
+var wave_label: Label3D
 
 var score := 0
 var ko_count := 0
 var alert_serial := 0
+var impact_serial := 0
+var wave_serial := 0
 var last_game_state := ""
+var last_wave := 0
 var bound_enemy_root_id := 0
+var enemy_health: Dictionary = {}
 
 
 func _ready() -> void:
@@ -21,6 +29,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	_try_bind()
+	_track_enemy_health()
 
 	var main := get_tree().current_scene
 	if main == null:
@@ -32,16 +41,31 @@ func _process(_delta: float) -> void:
 
 	var state := String(state_value)
 
-	if state == "playing" and last_game_state == "menu":
+	if state == "playing" and last_game_state != "playing":
 		score = 0
 		ko_count = 0
+		last_wave = 0
+		enemy_health.clear()
 		_update_score()
+
+	var wave_value = main.get("wave")
+	if state == "playing" and wave_value != null:
+		var current_wave := int(wave_value)
+		if current_wave > last_wave:
+			last_wave = current_wave
+			_show_wave(current_wave)
 
 	if score_label:
 		score_label.visible = state == "playing"
 
+	if wave_label:
+		wave_label.visible = state == "playing"
+
 	if alert_label and state != "playing":
 		alert_label.text = ""
+
+	if impact_label and state != "playing":
+		impact_label.text = ""
 
 	last_game_state = state
 
@@ -54,8 +78,14 @@ func _try_bind() -> void:
 	if not is_instance_valid(xr_camera):
 		xr_camera = get_tree().get_first_node_in_group("xr_camera") as XRCamera3D
 
-	if xr_camera and alert_label == null:
-		_create_feedback_hud()
+	if xr_camera:
+		if left_hand == null:
+			left_hand = xr_camera.get_parent().get_node_or_null("LeftHand") as XRController3D
+		if right_hand == null:
+			right_hand = xr_camera.get_parent().get_node_or_null("RightHand") as XRController3D
+
+		if alert_label == null:
+			_create_feedback_hud()
 
 	var main := get_tree().current_scene
 	if main == null:
@@ -66,14 +96,16 @@ func _try_bind() -> void:
 		return
 
 	var root_id := root.get_instance_id()
-	if root_id == bound_enemy_root_id:
-		return
+	if root_id != bound_enemy_root_id:
+		enemy_root = root
+		bound_enemy_root_id = root_id
 
-	enemy_root = root
-	bound_enemy_root_id = root_id
+		if not enemy_root.child_entered_tree.is_connected(_on_enemy_added):
+			enemy_root.child_entered_tree.connect(_on_enemy_added)
 
-	if not enemy_root.child_entered_tree.is_connected(_on_enemy_added):
-		enemy_root.child_entered_tree.connect(_on_enemy_added)
+	for child in root.get_children():
+		if child.is_in_group("tibo"):
+			_register_enemy(child)
 
 
 func _create_feedback_hud() -> void:
@@ -86,9 +118,28 @@ func _create_feedback_hud() -> void:
 	alert_label.text = ""
 	xr_camera.add_child(alert_label)
 
+	impact_label = Label3D.new()
+	impact_label.name = "TiboImpact"
+	impact_label.position = Vector3(0, -0.02, -1.10)
+	impact_label.font_size = 54
+	impact_label.outline_size = 11
+	impact_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	impact_label.text = ""
+	xr_camera.add_child(impact_label)
+
+	wave_label = Label3D.new()
+	wave_label.name = "TiboWave"
+	wave_label.position = Vector3(0, 0.48, -1.55)
+	wave_label.font_size = 46
+	wave_label.outline_size = 10
+	wave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wave_label.text = ""
+	wave_label.visible = false
+	xr_camera.add_child(wave_label)
+
 	score_label = Label3D.new()
 	score_label.name = "TiboScore"
-	score_label.position = Vector3(0.68, 0.50, -1.55)
+	score_label.position = Vector3(0.72, 0.48, -1.55)
 	score_label.font_size = 34
 	score_label.outline_size = 8
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -102,19 +153,134 @@ func _on_enemy_added(node: Node) -> void:
 	if not node.is_in_group("tibo"):
 		return
 
+	call_deferred("_register_enemy", node)
+	call_deferred("_announce_enemy", node)
+
+
+func _register_enemy(node: Node) -> void:
+	if not is_instance_valid(node):
+		return
+
+	if not node.is_in_group("tibo"):
+		return
+
+	var node_id := node.get_instance_id()
+
+	var health_value = node.get("health")
+	if health_value != null:
+		enemy_health[node_id] = int(health_value)
+
 	if node.has_signal("defeated"):
 		var defeated_callable := Callable(self, "_on_tibo_defeated")
 		if not node.is_connected("defeated", defeated_callable):
 			node.connect("defeated", defeated_callable)
 
-	call_deferred("_announce_enemy", node)
+	if node.has_signal("player_hit"):
+		var hit_callable := Callable(self, "_on_player_hit").bind(node)
+		if not node.is_connected("player_hit", hit_callable):
+			node.connect("player_hit", hit_callable)
+
+
+func _track_enemy_health() -> void:
+	if not is_instance_valid(enemy_root):
+		return
+
+	for child in enemy_root.get_children():
+		if not child.is_in_group("tibo"):
+			continue
+
+		var health_value = child.get("health")
+		if health_value == null:
+			continue
+
+		var node_id := child.get_instance_id()
+		var current_health := int(health_value)
+
+		if not enemy_health.has(node_id):
+			enemy_health[node_id] = current_health
+			continue
+
+		var old_health := int(enemy_health[node_id])
+
+		if current_health < old_health:
+			_enemy_hit_feedback(child as Node3D, old_health - current_health)
+
+		enemy_health[node_id] = current_health
+
+
+func _enemy_hit_feedback(enemy: Node3D, damage: int) -> void:
+	var controller := _nearest_controller(enemy)
+
+	if controller:
+		var amplitude := 0.55
+		var duration := 0.08
+
+		if damage >= 90:
+			amplitude = 1.0
+			duration = 0.14
+
+		controller.trigger_haptic_pulse("haptic", 0.0, amplitude, duration, 0.0)
+
+	impact_serial += 1
+	var this_impact := impact_serial
+
+	if impact_label:
+		if damage >= 90:
+			impact_label.text = "PELLE !  %d" % damage
+		else:
+			impact_label.text = "PAF !  %d" % damage
+
+	await get_tree().create_timer(0.32).timeout
+
+	if this_impact == impact_serial and impact_label:
+		impact_label.text = ""
+
+
+func _nearest_controller(enemy: Node3D) -> XRController3D:
+	if enemy == null:
+		return null
+
+	if left_hand == null:
+		return right_hand
+
+	if right_hand == null:
+		return left_hand
+
+	var left_distance := left_hand.global_position.distance_squared_to(enemy.global_position)
+	var right_distance := right_hand.global_position.distance_squared_to(enemy.global_position)
+
+	if left_distance <= right_distance:
+		return left_hand
+
+	return right_hand
+
+
+func _on_player_hit(damage: int, _source: Node) -> void:
+	if left_hand:
+		left_hand.trigger_haptic_pulse("haptic", 0.0, 0.30, 0.10, 0.0)
+
+	if right_hand:
+		right_hand.trigger_haptic_pulse("haptic", 0.0, 0.30, 0.10, 0.0)
+
+	impact_serial += 1
+	var this_impact := impact_serial
+
+	if impact_label:
+		impact_label.text = "AIE !  -%d PV" % damage
+
+	await get_tree().create_timer(0.45).timeout
+
+	if this_impact == impact_serial and impact_label:
+		impact_label.text = ""
 
 
 func _announce_enemy(node: Node) -> void:
 	if not is_instance_valid(node):
 		return
+
 	if not node is Node3D:
 		return
+
 	if xr_camera == null or alert_label == null:
 		return
 
@@ -129,6 +295,7 @@ func _announce_enemy(node: Node) -> void:
 
 	var forward := -xr_camera.global_transform.basis.z
 	forward.y = 0.0
+
 	if forward.length_squared() < 0.01:
 		forward = Vector3.FORWARD
 	else:
@@ -136,6 +303,7 @@ func _announce_enemy(node: Node) -> void:
 
 	var right := xr_camera.global_transform.basis.x
 	right.y = 0.0
+
 	if right.length_squared() < 0.01:
 		right = Vector3.RIGHT
 	else:
@@ -165,7 +333,25 @@ func _announce_enemy(node: Node) -> void:
 		alert_label.text = ""
 
 
-func _on_tibo_defeated(_tibo: Node) -> void:
+func _show_wave(wave_number: int) -> void:
+	if wave_label == null:
+		return
+
+	wave_serial += 1
+	var this_wave := wave_serial
+
+	wave_label.text = "VAGUE %d" % wave_number
+
+	await get_tree().create_timer(1.10).timeout
+
+	if this_wave == wave_serial and wave_label:
+		wave_label.text = ""
+
+
+func _on_tibo_defeated(tibo: Node) -> void:
+	if is_instance_valid(tibo):
+		enemy_health.erase(tibo.get_instance_id())
+
 	ko_count += 1
 
 	var points := 100
@@ -173,6 +359,7 @@ func _on_tibo_defeated(_tibo: Node) -> void:
 
 	if main:
 		var difficulty_value = main.get("selected_difficulty")
+
 		if difficulty_value != null:
 			var difficulty := String(difficulty_value)
 
