@@ -21,6 +21,12 @@ jobs:
       - name: Create build directory
         run: mkdir -p build
 
+      - name: Create Android debug keystore
+        run: keytool -genkeypair -v -keystore build/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Configure debug keystore
+        run: printf "\nkeystore/debug=\"build/debug.keystore\"\nkeystore/debug_user=\"androiddebugkey\"\nkeystore/debug_password=\"android\"\n" >> export_presets.cfg
+
       - name: Build Quest APK
         run: godot --headless --path . --export-debug "Quest 3" build/tibo-narvalo.apk
 

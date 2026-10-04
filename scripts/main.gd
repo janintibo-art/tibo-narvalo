@@ -1,6 +1,6 @@
 extends Node3D
 
-func _ready( -> void:
+func _ready() -> void:
     var xr_interface := XRServer.find_interface("OpenXR")
     if xr_interface == null:
         push_warning("OpenXR indisponible.")
