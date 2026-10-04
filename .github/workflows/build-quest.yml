@@ -19,7 +19,7 @@ jobs:
         run: yes | sdkmanager --sdk_root=/usr/lib/android-sdk "platform-tools" "build-tools;34.0.0" "platforms;android-34"
 
       - name: Install OpenXR Vendors 3.1.2
-        run: mkdir -p addons /tmp/tibo-vendors && wget -q https://github.com/GodotVR/godot_openxr_vendors/releases/download/3.1.2-stable/godotopenxrvendorsaddon.zip -O /tmp/tibo-vendors/vendors.zip && unzip -q /tmp/tibo-vendors/vendors.zip -d /tmp/tibo-vendors/unpacked && rm -rf addons/godotopenxrvendors && if [ -d /tmp/tibo-vendors/unpacked/addons/godotopenxrvendors ]; then cp -R /tmp/tibo-vendors/unpacked/addons/godotopenxrvendors addons/; elif [ -d /tmp/tibo-vendors/unpacked/assets/addons/godotopenxrvendors ]; then cp -R /tmp/tibo-vendors/unpacked/assets/addons/godotopenxrvendors addons/; else echo "Plugin OpenXR Vendors introuvable dans l archive"; find /tmp/tibo-vendors/unpacked -maxdepth 4 -type d; exit 1; fi
+        run: mkdir -p addons /tmp/tibo-vendors && wget -q https://github.com/GodotVR/godot_openxr_vendors/releases/download/3.1.2-stable/godotopenxrvendorsaddon.zip -O /tmp/tibo-vendors/vendors.zip && unzip -q /tmp/tibo-vendors/vendors.zip -d /tmp/tibo-vendors/unpacked && rm -rf addons/godotopenxrvendors && if [ -d /tmp/tibo-vendors/unpacked/addons/godotopenxrvendors ]; then cp -R /tmp/tibo-vendors/unpacked/addons/godotopenxrvendors addons/; elif [ -d /tmp/tibo-vendors/unpacked/asset/addons/godotopenxrvendors ]; then cp -R /tmp/tibo-vendors/unpacked/asset/addons/godotopenxrvendors addons/; else echo "Plugin OpenXR Vendors introuvable dans l archive"; find /tmp/tibo-vendors/unpacked -maxdepth 4 -type d; exit 1; fi
 
       - name: Install Android Gradle build template
         env:
