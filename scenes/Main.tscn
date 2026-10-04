@@ -1,19 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource path="res://scripts/main.gd" type="Script" id="1"]
 
 [sub_resource type="Environment" id="Environment_mr"]
 background_mode = 1
 background_color = Color(0, 0, 0, 0)
-
-[sub_resource type="StandardMaterial3D" id="Material_test"]
-shading_mode = 0
-albedo_color = Color(1, 0.15, 0.08, 1)
-
-[sub_resource type="SphereMesh" id="Sphere_test"]
-material = SubResource("Material_test")
-radius = 0.18
-height = 0.36
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1")
@@ -23,23 +14,12 @@ environment = SubResource("Environment_mr")
 
 [node name="XROrigin3D" type="XROrigin3D" parent="."]
 
-[node name="XRCamera3D" type="XRCamera3D" parent="XROrigin3D"]
+[node name="XRCamera3D" type="XRCamera3D" parent="XROrigin3D" groups=["xr_camera"]]
 
 [node name="LeftHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"left_hand"
 
 [node name="RightHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"right_hand"
-
-[node name="MRTestMarker" type="MeshInstance3D" parent="."]
-position = Vector3(0, 1.35, -2)
-mesh = SubResource("Sphere_test")
-
-[node name="MRTestLabel" type="Label3D" parent="."]
-position = Vector3(0, 1.72, -2)
-text = "TIBO NARVALO - MR OK"
-font_size = 48
-outline_size = 8
-billboard = 1
 
 [node name="EnemyRoot" type="Node3D" parent="."]
