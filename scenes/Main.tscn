@@ -1,10 +1,13 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource path="res://scripts/main.gd" type="Script" id="1"]
 
 [sub_resource type="Environment" id="Environment_mr"]
 background_mode = 1
 background_color = Color(0, 0, 0, 0)
+
+[sub_resource type="SphereShape3D" id="HandHitShape"]
+radius = 0.14
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1")
@@ -16,10 +19,33 @@ environment = SubResource("Environment_mr")
 
 [node name="XRCamera3D" type="XRCamera3D" parent="XROrigin3D" groups=["xr_camera"]]
 
+[node name="HealthHUD" type="Label3D" parent="XROrigin3D/XRCamera3D"]
+position = Vector3(0, -0.32, -1.35)
+text = "VIE 100/100   VAGUE 0   TIBO 0"
+font_size = 54
+outline_size = 10
+horizontal_alignment = 1
+
 [node name="LeftHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"left_hand"
 
+[node name="HitArea" type="Area3D" parent="XROrigin3D/LeftHand"]
+collision_layer = 0
+collision_mask = 1
+monitoring = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="XROrigin3D/LeftHand/HitArea"]
+shape = SubResource("HandHitShape")
+
 [node name="RightHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"right_hand"
+
+[node name="HitArea" type="Area3D" parent="XROrigin3D/RightHand"]
+collision_layer = 0
+collision_mask = 1
+monitoring = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="XROrigin3D/RightHand/HitArea"]
+shape = SubResource("HandHitShape")
 
 [node name="EnemyRoot" type="Node3D" parent="."]

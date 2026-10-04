@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/tibo.gd" id="1_tibo"]
 [ext_resource type="PackedScene" path="res://assets/tibo/Tibo.glb" id="2_model"]
@@ -7,12 +7,9 @@
 radius = 0.28
 height = 1.7
 
-[sub_resource type="StandardMaterial3D" id="Material_shadow"]
-transparency = 1
-albedo_color = Color(0, 0, 0, 0.2)
-shading_mode = 0
-
-[node name="Tibo" type="CharacterBody3D"]
+[node name="Tibo" type="CharacterBody3D" groups=["tibo"]]
+collision_layer = 1
+collision_mask = 1
 script = ExtResource("1_tibo")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
@@ -26,7 +23,7 @@ rotation = Vector3(0, 3.1415927, 0)
 
 [node name="Name" type="Label3D" parent="."]
 position = Vector3(0, 1.95, 0)
-text = "TIBO"
+text = "TIBO\n100 HP"
 font_size = 38
 outline_size = 8
 billboard = 1
