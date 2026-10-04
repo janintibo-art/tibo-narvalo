@@ -18,6 +18,11 @@ jobs:
       - name: Prepare export templates
         run: mkdir -p ~/.local/share/godot/export_templates && cp -r /root/.local/share/godot/export_templates/4.3.stable ~/.local/share/godot/export_templates/4.3.stable || true
 
+      - name: Configure Android environment
+        run: |
+          echo "JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))" >> $GITHUB_ENV
+          echo "ANDROID_HOME=${ANDROID_HOME:-/opt/android-sdk}" >> $GITHUB_ENV
+
       - name: Create build directory
         run: mkdir -p build
 
@@ -28,6 +33,9 @@ jobs:
         run: printf "\nkeystore/debug=\"build/debug.keystore\"\nkeystore/debug_user=\"androiddebugkey\"\nkeystore/debug_password=\"android\"\n" >> export_presets.cfg
 
       - name: Build Quest APK
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
         run: godot --headless --path . --export-debug "Quest 3" build/tibo-narvalo.apk
 
       - name: Upload APK
