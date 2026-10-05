@@ -2,6 +2,7 @@
 
 config/name="Tibo Narvalo"
 run/main_scene="res://scenes/Main.tscn"
+config/icon="res://assets/ui/icon.png"
 
 [autoload]
 

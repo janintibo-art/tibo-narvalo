@@ -107,7 +107,11 @@ func _ready() -> void:
 
 		hit_animation = _find_first_animation(["hit", "damage", "impact"])
 		death_animation = _find_first_animation(["death", "die", "dying", "knock"])
-		attack_animations = _find_animations(["attack", "hook", "kick", "punch", "strike"])
+		attack_animations = []
+
+		for candidate in _find_animations(["attack", "hook", "kick", "punch", "strike"]):
+			if animation_player.get_animation(candidate).length <= 2.5:
+				attack_animations.append(candidate)
 
 		_play(walk_animation)
 

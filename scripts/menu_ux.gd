@@ -19,7 +19,7 @@ var right_hand: XRController3D
 
 var ui_root: Node3D
 var status_label: Label3D
-var title_label: Label3D
+var title_label: Node3D
 var anim_time := 0.0
 var instruction_label: Label3D
 var reticle: Label3D
@@ -187,21 +187,29 @@ func _build_ui() -> void:
 	_add_bar(Vector3(0, -0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.56, 0.10))
 	_add_bar(Vector3(-0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(0.15, 0.65, 1.0))
 	_add_bar(Vector3(0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(1.0, 0.56, 0.10))
-	_add_bar(Vector3(0, 0.34, 0.03), Vector3(1.80, 0.006, 0.01), Color(0.35, 0.45, 0.65))
 
-	var title_shadow := _make_label("TIBO NARVALO", Vector3(0.012, 0.548, 0.030), 64, 0.0022)
-	title_shadow.modulate = Color(0, 0, 0, 0.7)
-	title_shadow.outline_size = 0
-	ui_root.add_child(title_shadow)
+	var logo_path := "res://assets/ui/logo.png"
 
-	var title := _make_label("TIBO NARVALO", Vector3(0, 0.56, 0.035), 64, 0.0022)
-	title.outline_size = 18
-	title.modulate = Color(1.0, 0.93, 0.62)
-	title.outline_modulate = Color(0.45, 0.15, 0.02, 1.0)
-	ui_root.add_child(title)
-	title_label = title
+	if ResourceLoader.exists(logo_path):
+		var logo := Sprite3D.new()
+		logo.name = "Logo"
+		logo.texture = load(logo_path) as Texture2D
+		logo.pixel_size = 0.00092
+		logo.position = Vector3(0, 0.60, 0.05)
+		logo.shaded = false
+		logo.transparent = true
+		logo.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+		logo.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		ui_root.add_child(logo)
+		title_label = logo
+	else:
+		var title := _make_label("TIBO NARVALO", Vector3(0, 0.56, 0.035), 64, 0.0022)
+		title.outline_size = 18
+		title.modulate = Color(1.0, 0.93, 0.62)
+		title.outline_modulate = Color(0.45, 0.15, 0.02, 1.0)
+		ui_root.add_child(title)
+		title_label = title
 
-	ui_root.add_child(_make_label("REALITE MIXTE - QUEST 3", Vector3(0, 0.43, 0.035), 32, 0.0018))
 	ui_root.add_child(_make_label("MODE", Vector3(-0.72, 0.27, 0.035), 30, 0.0018))
 	ui_root.add_child(_make_label("DIFFICULTE", Vector3(0.47, 0.27, 0.035), 30, 0.0018))
 
