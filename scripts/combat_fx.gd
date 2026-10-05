@@ -36,6 +36,56 @@ func hit_effect(pos: Vector3, damage: int, strong: bool, shovel: bool) -> void:
 	_spawn_number(scene, pos, damage, strong, shovel)
 
 
+func spark(pos: Vector3, color: Color = Color(0.6, 0.85, 1.0), amount: int = 14) -> void:
+	var scene := get_tree().current_scene
+
+	if scene:
+		_spawn_burst(scene, pos, amount, 2.6, color, 0.014)
+
+
+func glass_effect(pos: Vector3) -> void:
+	var scene := get_tree().current_scene
+
+	if scene:
+		_spawn_burst(scene, pos, 30, 2.8, Color(0.75, 1.0, 0.8), 0.01)
+
+
+func heal_effect(pos: Vector3, amount: int) -> void:
+	var scene := get_tree().current_scene
+
+	if scene == null:
+		return
+
+	_spawn_burst(scene, pos, 26, 1.8, Color(0.35, 1.0, 0.45), 0.014)
+	float_text(pos + Vector3(0, 0.1, 0), "+%d VIE" % amount, Color(0.45, 1.0, 0.5), 80)
+
+
+func float_text(pos: Vector3, text: String, color: Color, size: int) -> void:
+	var scene := get_tree().current_scene
+
+	if scene == null:
+		return
+
+	var label := Label3D.new()
+	label.text = text
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.pixel_size = 0.0012
+	label.font_size = size
+	label.outline_size = 12
+	label.outline_modulate = Color(0.0, 0.1, 0.0)
+	label.modulate = color
+
+	scene.add_child(label)
+	label.global_position = pos
+
+	var tween := label.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "global_position:y", pos.y + 0.4, 0.9).set_ease(Tween.EASE_OUT)
+	tween.tween_property(label, "modulate:a", 0.0, 0.35).set_delay(0.55)
+	tween.chain().tween_callback(label.queue_free)
+
+
 func ko_effect(pos: Vector3) -> void:
 	var scene := get_tree().current_scene
 

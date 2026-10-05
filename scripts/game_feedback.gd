@@ -230,17 +230,30 @@ func _nearest_controller(enemy: Node3D) -> XRController3D:
 
 
 func _on_player_hit(damage: int, _source: Node) -> void:
+	var shown := damage
+	var blocked := false
+	var main := get_tree().current_scene
+
+	if main != null and main.has_method("is_guarding") and main.call("is_guarding"):
+		blocked = true
+		shown = int(main.call("reduced_damage", damage))
+
+	var strength := 0.75 if blocked else 0.30
+
 	if left_hand:
-		left_hand.trigger_haptic_pulse("haptic", 0.0, 0.30, 0.10, 0.0)
+		left_hand.trigger_haptic_pulse("haptic", 0.0, strength, 0.10, 0.0)
 
 	if right_hand:
-		right_hand.trigger_haptic_pulse("haptic", 0.0, 0.30, 0.10, 0.0)
+		right_hand.trigger_haptic_pulse("haptic", 0.0, strength, 0.10, 0.0)
 
 	impact_serial += 1
 	var this_impact := impact_serial
 
 	if impact_label:
-		impact_label.text = "AIE !  -%d PV" % damage
+		if blocked:
+			impact_label.text = "PARADE !  -%d PV" % shown
+		else:
+			impact_label.text = "AIE !  -%d PV" % shown
 
 	await get_tree().create_timer(0.45).timeout
 
@@ -307,6 +320,25 @@ func _announce_enemy(node: Node) -> void:
 		alert_label.text = ""
 
 
+func show_message(text: String, seconds: float = 1.2) -> void:
+	if alert_label == null:
+		return
+
+	alert_serial += 1
+	var this_alert := alert_serial
+
+	alert_label.text = text
+
+	await get_tree().create_timer(seconds).timeout
+
+	if this_alert == alert_serial and alert_label:
+		alert_label.text = ""
+
+
+func player_damaged(damage: int) -> void:
+	_on_player_hit(damage, null)
+
+
 func show_combo(count: int) -> void:
 	if alert_label == null or count < 2:
 		return
@@ -357,6 +389,17 @@ func _on_tibo_defeated(tibo: Node) -> void:
 				points = 150
 			elif difficulty == "difficile":
 				points = 225
+
+	if is_instance_valid(tibo):
+		var kind_value = tibo.get("kind")
+
+		if kind_value != null:
+			var kind := String(kind_value)
+
+			if kind == "costaud":
+				points *= 2
+			elif kind == "lanceur" or kind == "rapide":
+				points = int(points * 1.5)
 
 	score += points
 	_update_score()

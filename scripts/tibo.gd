@@ -3,18 +3,22 @@ extends CharacterBody3D
 
 signal player_hit(damage: int)
 signal defeated(tibo: Node)
+signal projectile_spawned(projectile: Node)
 
 @export var move_speed: float = 1.15
 @export var attack_distance: float = 0.80
 @export var attack_repeat: float = 1.8
 @export var max_health: int = 100
 @export var attack_damage: int = 12
+@export var kind: String = "normal"
 
 const STAGGER_TIME := 0.45
 const KNOCKBACK_SPEED := 1.8
 const ATTACK_WINDUP := 0.55
 const BAR_WIDTH := 0.60
 const BAR_HEIGHT := 0.07
+const THROW_RANGE_MAX := 3.6
+const THROW_RANGE_MIN := 2.0
 
 var health: int
 var player_camera: XRCamera3D
@@ -32,11 +36,19 @@ var stagger_timer: float = 0.0
 var stagger_total: float = STAGGER_TIME
 var knockback := Vector3.ZERO
 
+var is_thrower := false
+var windup_time: float = ATTACK_WINDUP
+var warn_color := Color(1.0, 0.45, 0.05)
+var base_label_color := Color.WHITE
+var kind_title := "TIBO"
+var flash_color := Color(1.0, 0.1, 0.05)
+
 var meshes: Array[MeshInstance3D] = []
 var tint_material: StandardMaterial3D
 var tint_on := false
 var flash_tween: Tween
 
+var bar_root: Node3D
 var bar_fill: MeshInstance3D
 var bar_fill_mesh: QuadMesh
 var bar_fill_material: StandardMaterial3D
@@ -47,6 +59,7 @@ var bar_fill_material: StandardMaterial3D
 
 
 func _ready() -> void:
+	_apply_kind()
 	health = max_health
 	move_speed *= randf_range(0.88, 1.18)
 	attack_repeat *= randf_range(0.85, 1.15)
@@ -71,6 +84,12 @@ func _ready() -> void:
 	_collect_meshes(model_pivot)
 	_build_tint()
 	_build_health_bar()
+
+	var height_scale := model_pivot.scale.y
+	name_label.position.y = 2.0 * height_scale
+	bar_root.position.y = 1.84 * height_scale
+	name_label.modulate = base_label_color
+
 	_update_label()
 
 
@@ -107,15 +126,27 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		attack_windup -= delta
 
-		var progress := 1.0 - clampf(attack_windup / ATTACK_WINDUP, 0.0, 1.0)
+		var progress := 1.0 - clampf(attack_windup / windup_time, 0.0, 1.0)
 		var pulse := 0.75 + 0.25 * sin(progress * 38.0)
-		_set_tint(Color(1.0, 0.45, 0.05, 0.55 * progress * pulse))
+		_set_tint(Color(warn_color.r, warn_color.g, warn_color.b, 0.55 * progress * pulse))
 
 		if attack_windup <= 0.0:
 			attack_in_progress = false
 			_end_warning()
-			if distance <= attack_distance + 0.30:
+
+			if is_thrower:
+				_throw_beer()
+			elif distance <= attack_distance + 0.30:
+				var main := get_tree().current_scene
+
+				if main != null and main.has_method("is_guarding") and main.call("is_guarding"):
+					recoil()
+
 				player_hit.emit(attack_damage)
+		return
+
+	if is_thrower:
+		_thrower_move(delta, to_player, distance)
 		return
 
 	if distance > attack_distance:
@@ -134,9 +165,73 @@ func _physics_process(delta: float) -> void:
 			attack_timer = attack_repeat
 
 
+func _thrower_move(delta: float, to_player: Vector3, distance: float) -> void:
+	var direction := to_player.normalized()
+
+	if distance > THROW_RANGE_MAX:
+		velocity = direction * move_speed
+		_play(walk_animation)
+	elif distance < THROW_RANGE_MIN:
+		velocity = -direction * move_speed * 0.8
+		_play(walk_animation)
+	else:
+		velocity = Vector3.ZERO
+
+	velocity.y = 0.0
+	move_and_slide()
+
+	if distance <= THROW_RANGE_MAX + 0.6:
+		attack_timer -= delta
+
+		if attack_timer <= 0.0:
+			_start_attack()
+			attack_timer = attack_repeat
+
+
+func _throw_beer() -> void:
+	if player_camera == null or get_parent() == null:
+		return
+
+	var forward := -global_transform.basis.z
+	forward.y = 0.0
+
+	if forward.length_squared() < 0.001:
+		forward = Vector3.FORWARD
+
+	var start := global_position + Vector3(0, 1.45, 0) + forward.normalized() * 0.4
+	var target := player_camera.global_position + Vector3(0, -0.08, 0)
+
+	var projectile := BeerProjectile.new()
+	projectile.damage = int(attack_damage * 1.3)
+	projectile.source = self
+	get_parent().add_child(projectile)
+	projectile.launch(start, target)
+
+	GameAudio.play_sfx("whoosh", start, -2.0, 0.8)
+	projectile_spawned.emit(projectile)
+
+
+func recoil() -> void:
+	if is_dead:
+		return
+
+	attack_in_progress = false
+	attack_timer = maxf(attack_timer, 1.0)
+	stagger_total = 0.6
+	stagger_timer = 0.6
+	_flash_hit(Color(0.4, 0.7, 1.0))
+
+	if player_camera:
+		var away := global_position - player_camera.global_position
+		away.y = 0.0
+
+		if away.length_squared() > 0.0001:
+			knockback = away.normalized() * 2.6
+
+
 func _start_attack() -> void:
 	attack_in_progress = true
-	attack_windup = ATTACK_WINDUP
+	attack_windup = windup_time
 
 	name_label.modulate = Color(1.0, 0.35, 0.25)
 	GameAudio.play_sfx("windup", global_position + Vector3(0, 1.2, 0), -4.0)
@@ -147,7 +242,7 @@ func _start_attack() -> void:
 
 
 func _end_warning() -> void:
-	name_label.modulate = Color.WHITE
+	name_label.modulate = base_label_color
 	_set_tint(Color(1, 1, 1, 0))
 
 
@@ -164,7 +259,7 @@ func take_hit(amount: int, power: float = 1.0) -> void:
 		return
 
 	attack_in_progress = false
-	name_label.modulate = Color.WHITE
+	name_label.modulate = base_label_color
 	attack_timer = maxf(attack_timer, 0.6)
 	stagger_total = STAGGER_TIME * clampf(power, 0.8, 1.3)
 	stagger_timer = stagger_total
@@ -213,10 +308,48 @@ func _die() -> void:
 
 func _update_label() -> void:
 	if name_label:
-		var title := "MEGA TIBO" if has_meta("is_boss") else "TIBO"
+		var title := "MEGA TIBO" if has_meta("is_boss") else kind_title
 		name_label.text = "%s  %d" % [title, health]
 
 	_update_bar()
+
+
+func _apply_kind() -> void:
+	if kind == "rapide":
+		kind_title = "TIBO RAPIDE"
+		base_label_color = Color(0.4, 0.9, 1.0)
+		move_speed *= 1.45
+		max_health = maxi(20, int(max_health * 0.6))
+		attack_damage = maxi(3, int(attack_damage * 0.8))
+		attack_repeat *= 0.75
+		model_pivot.scale = Vector3.ONE * 0.92
+	elif kind == "costaud":
+		kind_title = "TIBO COSTAUD"
+		base_label_color = Color(1.0, 0.6, 0.2)
+		move_speed *= 0.72
+		max_health = int(max_health * 2.0)
+		attack_damage = int(attack_damage * 1.6)
+		attack_repeat *= 1.3
+		attack_distance = 0.95
+		windup_time = 0.7
+		model_pivot.scale = Vector3.ONE * 1.22
+
+		var shape := collision_shape.shape.duplicate() as CapsuleShape3D
+
+		if shape:
+			shape.radius = 0.34
+			shape.height = 2.0
+			collision_shape.shape = shape
+			collision_shape.position = Vector3(0, 1.0, 0)
+	elif kind == "lanceur":
+		kind_title = "TIBO LANCEUR"
+		base_label_color = Color(0.85, 0.5, 1.0)
+		is_thrower = true
+		move_speed *= 0.85
+		max_health = int(max_health * 0.8)
+		attack_repeat = 2.8
+		windup_time = 0.8
+		warn_color = Color(0.6, 1.0, 0.2)
 
 
 func _collect_meshes(node: Node) -> void:
@@ -253,18 +386,19 @@ func _set_tint(color: Color) -> void:
 			mesh.material_overlay = tint_material
 
 
-func _flash_hit() -> void:
+func _flash_hit(color: Color = Color(1.0, 0.1, 0.05)) -> void:
 	if flash_tween:
 		flash_tween.kill()
 
-	_set_tint(Color(1.0, 0.1, 0.05, 0.65))
+	flash_color = color
+	_set_tint(Color(color.r, color.g, color.b, 0.65))
 
 	flash_tween = create_tween()
 	flash_tween.tween_method(_flash_step, 0.65, 0.0, 0.22)
 
 
 func _flash_step(alpha: float) -> void:
-	_set_tint(Color(1.0, 0.1, 0.05, alpha))
+	_set_tint(Color(flash_color.r, flash_color.g, flash_color.b, alpha))
 
 
 func _build_health_bar() -> void:
@@ -272,6 +406,7 @@ func _build_health_bar() -> void:
 	bar.name = "HealthBar"
 	bar.position = Vector3(0, 1.84, 0)
 	add_child(bar)
+	bar_root = bar
 
 	var back_mesh := QuadMesh.new()
 	back_mesh.size = Vector2(BAR_WIDTH + 0.02, BAR_HEIGHT + 0.02)

@@ -8,7 +8,8 @@ const POOL_3D := 10
 
 const SOUND_NAMES := [
 	"click", "start", "back", "punch", "punch_strong", "shovel", "whoosh",
-	"hurt", "windup", "ko", "wave", "boss", "gameover", "combo"
+	"hurt", "windup", "ko", "wave", "boss", "gameover", "combo",
+	"block", "guard", "grab", "drink", "glass", "heal"
 ]
 
 var sounds: Dictionary = {}
@@ -293,5 +294,84 @@ func _make_boss() -> AudioStreamWAV:
 		var env := sqrt(sin(PI * t / duration))
 		var sub := sin(TAU * 110.0 * t) * 0.4
 		out[i] = tanh((lp * 2.2 * growl + sub) * env * 1.4) * 0.9
+
+	return _build(out)
+
+
+func _make_block() -> AudioStreamWAV:
+	var out := _buffer(0.28)
+	var lp := 0.0
+
+	for i in out.size():
+		var t := float(i) / RATE
+		var thump := sin(TAU * 90.0 * t) * exp(-t * 24.0)
+		var ping := sin(TAU * 1400.0 * t) * exp(-t * 30.0) * 0.5 + sin(TAU * 2100.0 * t) * exp(-t * 42.0) * 0.3
+		lp += (rng.randf_range(-1.0, 1.0) - lp) * 0.4
+		var tick := lp * exp(-t * 90.0) * 0.6
+		out[i] = tanh((thump * 1.1 + ping + tick) * 1.5) * 0.85
+
+	return _build(out)
+
+
+func _make_guard() -> AudioStreamWAV:
+	return _melody([520.0, 780.0], 0.04, 0.16, 22.0, 0.1)
+
+
+func _make_grab() -> AudioStreamWAV:
+	return _melody([500.0, 750.0], 0.03, 0.14, 30.0, 0.2)
+
+
+func _make_heal() -> AudioStreamWAV:
+	return _melody([523.0, 659.0, 784.0], 0.07, 0.5, 8.0, 0.2)
+
+
+func _make_drink() -> AudioStreamWAV:
+	var out := _buffer(0.75)
+	var phase := 0.0
+
+	for i in out.size():
+		var t := float(i) / RATE
+		var s_val := 0.0
+
+		for gulp in 3:
+			var u := (t - gulp * 0.22) / 0.16
+
+			if u < 0.0 or u > 1.0:
+				continue
+
+			var env := sin(PI * u)
+			var freq := 230.0 - 110.0 * u
+			phase += TAU * freq / RATE
+			s_val += (sin(phase) + 0.4 * sin(phase * 2.0)) * env * 0.5
+
+		out[i] = tanh(s_val * 1.3) * 0.7
+
+	return _build(out)
+
+
+func _make_glass() -> AudioStreamWAV:
+	var out := _buffer(0.55)
+	var lp := 0.0
+	var tinkles: Array = []
+
+	for k in 7:
+		tinkles.append([rng.randf_range(0.0, 0.25), rng.randf_range(2500.0, 6500.0), rng.randf_range(22.0, 45.0)])
+
+	for i in out.size():
+		var t := float(i) / RATE
+		var noise := rng.randf_range(-1.0, 1.0)
+		lp += (noise - lp) * 0.15
+		var crash := (noise - lp) * exp(-t * 16.0)
+		var ring := 0.0
+
+		for tinkle in tinkles:
+			var tl: float = t - float(tinkle[0])
+
+			if tl < 0.0:
+				continue
+
+			ring += sin(TAU * float(tinkle[1]) * tl) * exp(-tl * float(tinkle[2])) * 0.25
+
+		out[i] = tanh(crash * 1.2 + ring) * 0.75
 
 	return _build(out)

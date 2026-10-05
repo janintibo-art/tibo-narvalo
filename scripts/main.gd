@@ -47,6 +47,19 @@ var last_hit_time := 0.0
 var exit_hold := 0.0
 var hud_hint := ""
 
+const GUARD_HOLD := 0.12
+const GUARD_REDUCTION := 0.65
+const GRAB_RADIUS := 0.25
+const DRINK_RADIUS := 0.22
+const DRINK_TIME := 0.35
+const DEFLECT_MIN_SPEED := 0.6
+
+var guard_hold := 0.0
+var guarding := false
+var held_beer := {"left": null, "right": null}
+var drink_timer := {"left": 0.0, "right": 0.0}
+var beer_hint_shown := false
+
 var menu_root: Node3D
 var menu_status: Label3D
 var shovel_root: Node3D
@@ -445,7 +458,11 @@ func _start_game() -> void:
 
 	GameAudio.play_sfx("start")
 
-	hud_hint = "MENU (manette gauche) = accueil"
+	guard_hold = 0.0
+	guarding = false
+	_clear_pickups()
+
+	hud_hint = "MENU (manette gauche) = accueil\nPoings devant le visage = parade"
 	_hide_hint_later(run_serial)
 
 	menu_root.visible = false
@@ -519,6 +536,7 @@ func _spawn_one_tibo() -> void:
 	)
 
 	var tibo := TIBO_SCENE.instantiate() as TiboEnemy
+	tibo.kind = _pick_kind()
 
 	if selected_difficulty == DIFF_EASY:
 		tibo.move_speed *= 0.80
@@ -537,10 +555,54 @@ func _spawn_one_tibo() -> void:
 
 	tibo.player_hit.connect(_on_tibo_hit_player)
 	tibo.defeated.connect(_on_tibo_defeated)
+	tibo.projectile_spawned.connect(_on_projectile_spawned)
 
 	wave_spawned += 1
 	active_tibos += 1
 	_update_hud()
+
+
+func _pick_kind() -> String:
+	if wave % 5 == 0:
+		return "normal"
+
+	var weights := {"normal": 6.0}
+
+	if wave >= 2:
+		weights["rapide"] = 2.0
+
+	if wave >= 3:
+		weights["costaud"] = 1.5
+
+	var thrower_wave := 4 if selected_difficulty == DIFF_EASY else 3
+
+	if wave >= thrower_wave and _count_kind("lanceur") < 1:
+		weights["lanceur"] = 1.5
+
+	var total := 0.0
+
+	for key in weights:
+		total += float(weights[key])
+
+	var roll := randf() * total
+
+	for key in weights:
+		roll -= float(weights[key])
+
+		if roll <= 0.0:
+			return String(key)
+
+	return "normal"
+
+
+func _count_kind(kind_name: String) -> int:
+	var count := 0
+
+	for child in enemy_root.get_children():
+		if child.get("kind") == kind_name and child.get("is_dead") != true:
+			count += 1
+
+	return count
 
 
 func _physics_process(delta: float) -> void:
@@ -548,11 +610,58 @@ func _physics_process(delta: float) -> void:
 
 	if game_state != "playing" or game_over:
 		exit_hold = 0.0
+		guard_hold = 0.0
+		guarding = false
 		return
 
+	_update_guard(delta)
 	_play_swing_sounds()
 	_process_hits()
+	_process_pickups(delta)
 	_check_exit_hold(delta)
+
+
+func is_guarding() -> bool:
+	return guarding and game_state == "playing"
+
+
+func reduced_damage(damage: int) -> int:
+	return maxi(1, int(round(damage * (1.0 - GUARD_REDUCTION))))
+
+
+func _update_guard(delta: float) -> void:
+	var raised := false
+
+	if left_hand.get_is_active() and right_hand.get_is_active():
+		var head := xr_camera.global_position
+		var forward := -xr_camera.global_transform.basis.z
+		raised = _hand_guarding(left_hand, head, forward) and _hand_guarding(right_hand, head, forward)
+
+	if raised:
+		guard_hold += delta
+	else:
+		guard_hold = 0.0
+
+	var now_guarding := guard_hold >= GUARD_HOLD
+
+	if now_guarding and not guarding:
+		GameAudio.play_sfx("guard", null, -6.0)
+		left_hand.trigger_haptic_pulse("haptic", 0.0, 0.25, 0.05, 0.0)
+		right_hand.trigger_haptic_pulse("haptic", 0.0, 0.25, 0.05, 0.0)
+
+	guarding = now_guarding
+
+
+func _hand_guarding(hand: XRController3D, head: Vector3, forward: Vector3) -> bool:
+	var rel := hand.global_position - head
+
+	if rel.length() > 0.50:
+		return false
+
+	if rel.dot(forward) < 0.08:
+		return false
+
+	return absf(rel.y) <= 0.30
 
 
 func _update_hand_speeds(delta: float) -> void:
@@ -622,6 +731,9 @@ func _hit_with(area: Area3D, key: String, base_damage: int, min_speed: float, is
 
 	var speed: float = hand_speed[key]
 
+	if speed >= DEFLECT_MIN_SPEED:
+		_deflect_projectiles(area, key, speed, is_shovel)
+
 	if speed < min_speed:
 		return
 
@@ -642,6 +754,33 @@ func _hit_with(area: Area3D, key: String, base_damage: int, min_speed: float, is
 
 		enemy.set_meta(meta_key, now)
 		_land_hit(enemy, key, area.global_position, base_damage, speed, is_shovel)
+
+
+func _deflect_projectiles(area: Area3D, key: String, speed: float, is_shovel: bool) -> void:
+	for overlapping in area.get_overlapping_areas():
+		var bottle := overlapping as BeerProjectile
+
+		if bottle == null or bottle.deflected:
+			continue
+
+		var fallback := bottle.global_position - xr_camera.global_position
+		fallback.y = 0.0
+
+		if fallback.length_squared() < 0.001:
+			fallback = -xr_camera.global_transform.basis.z
+
+		var power := clampf(speed / 3.0, 0.8, 1.4)
+
+		if is_shovel:
+			power *= 1.3
+
+		bottle.deflect(power, fallback.normalized())
+
+		CombatFX.spark(bottle.global_position, Color(0.8, 1.0, 0.8), 10)
+		GameAudio.play_sfx("punch", bottle.global_position, -1.0, 1.3)
+
+		var controller: XRController3D = left_hand if key == "left" else right_hand
+		controller.trigger_haptic_pulse("haptic", 0.0, 0.5, 0.07, 0.0)
 
 
 func _land_hit(
@@ -736,23 +875,51 @@ func _hide_hint_later(serial: int) -> void:
 
 
 func _on_tibo_hit_player(damage: int) -> void:
+	_apply_player_damage(damage, false)
+
+
+func _on_projectile_spawned(projectile: Node) -> void:
+	var bottle := projectile as BeerProjectile
+
+	if bottle != null and not bottle.hit_player.is_connected(_on_projectile_hit):
+		bottle.hit_player.connect(_on_projectile_hit)
+
+
+func _on_projectile_hit(damage: int) -> void:
+	_apply_player_damage(damage, true)
+
+
+func _apply_player_damage(damage: int, from_projectile: bool) -> void:
 	if game_state != "playing" or game_over:
 		return
 
-	player_health = max(0, player_health - damage)
+	var blocked := is_guarding()
+	var final_damage := reduced_damage(damage) if blocked else damage
+
+	player_health = max(0, player_health - final_damage)
 	combo = 0
 	_update_hud()
 
-	GameAudio.play_sfx("hurt")
-	CombatFX.player_hurt(damage)
+	if blocked:
+		var middle := (left_hand.global_position + right_hand.global_position) * 0.5
+		GameAudio.play_sfx("block", middle)
+		CombatFX.spark(middle, Color(0.6, 0.85, 1.0), 16)
+	else:
+		GameAudio.play_sfx("hurt")
+		CombatFX.player_hurt(final_damage)
+
+	if from_projectile:
+		GameFeedback.player_damaged(damage)
 
 	if player_health <= 0:
 		call_deferred("_game_over")
 
 
-func _on_tibo_defeated(_tibo: Node) -> void:
+func _on_tibo_defeated(tibo: Node) -> void:
 	if game_state != "playing":
 		return
+
+	_maybe_drop_beer(tibo)
 
 	active_tibos = max(0, active_tibos - 1)
 	wave_defeated += 1
@@ -764,6 +931,149 @@ func _on_tibo_defeated(_tibo: Node) -> void:
 			call_deferred("_next_wave_after_pause")
 	else:
 		call_deferred("_replacement_after_pause")
+
+
+func _maybe_drop_beer(tibo: Node) -> void:
+	var enemy := tibo as Node3D
+
+	if enemy == null:
+		return
+
+	var chance := 0.25
+	var kind_name := String(tibo.get("kind"))
+
+	if kind_name == "costaud":
+		chance = 0.6
+	elif kind_name == "lanceur":
+		chance = 0.5
+	elif kind_name == "rapide":
+		chance = 0.2
+
+	if tibo.has_meta("is_boss"):
+		chance = 1.0
+
+	if player_health >= player_max_health:
+		chance *= 0.5
+
+	if get_tree().get_nodes_in_group("beer_pickup").size() >= 2:
+		return
+
+	if randf() > chance:
+		return
+
+	var head := xr_camera.global_position
+	var toward := enemy.global_position - head
+	toward.y = 0.0
+
+	if toward.length_squared() < 0.001:
+		toward = -xr_camera.global_transform.basis.z
+
+	var spot := head + toward.normalized() * minf(toward.length(), 1.0)
+	spot.y = _floor_y() + 1.05
+
+	var pickup := BeerPickup.new()
+	add_child(pickup)
+	pickup.global_position = spot
+	pickup.base_y = spot.y
+
+	if not beer_hint_shown:
+		beer_hint_shown = true
+		GameFeedback.show_message("BIERE ! Poing ferme pour l'attraper,\npuis bois-la", 3.5)
+
+
+func _process_pickups(delta: float) -> void:
+	for key in ["left", "right"]:
+		var hand: XRController3D = left_hand if key == "left" else right_hand
+
+		if not hand.get_is_active():
+			continue
+
+		var gripping := _is_gripping(hand)
+		var held = held_beer[key]
+
+		if held != null and not is_instance_valid(held):
+			held_beer[key] = null
+			held = null
+
+		if held == null:
+			if gripping:
+				_try_grab(key, hand)
+		elif not gripping:
+			(held as Node).queue_free()
+			held_beer[key] = null
+			drink_timer[key] = 0.0
+		elif _near_mouth(hand):
+			drink_timer[key] = float(drink_timer[key]) + delta
+
+			if float(drink_timer[key]) >= DRINK_TIME:
+				_drink(key, hand)
+		else:
+			drink_timer[key] = 0.0
+
+
+func _is_gripping(hand: XRController3D) -> bool:
+	return hand.get_float("grip") > 0.6 or hand.is_button_pressed("grip_click")
+
+
+func _try_grab(key: String, hand: XRController3D) -> void:
+	for node in get_tree().get_nodes_in_group("beer_pickup"):
+		var pickup := node as BeerPickup
+
+		if pickup == null or pickup.held:
+			continue
+
+		if pickup.global_position.distance_to(hand.global_position) <= GRAB_RADIUS:
+			pickup.set_held(true)
+			pickup.reparent(hand, false)
+			pickup.position = Vector3(0, 0, -0.06)
+			pickup.rotation_degrees = Vector3(-35, 0, 0)
+			held_beer[key] = pickup
+			drink_timer[key] = 0.0
+
+			GameAudio.play_sfx("grab", hand.global_position)
+			hand.trigger_haptic_pulse("haptic", 0.0, 0.4, 0.06, 0.0)
+			return
+
+
+func _near_mouth(hand: XRController3D) -> bool:
+	var forward := -xr_camera.global_transform.basis.z
+	var mouth := xr_camera.global_position + Vector3(0, -0.10, 0) + forward * 0.08
+	return hand.global_position.distance_to(mouth) <= DRINK_RADIUS
+
+
+func _drink(key: String, hand: XRController3D) -> void:
+	var beer := held_beer[key] as BeerPickup
+	var heal := 25
+
+	if beer != null:
+		heal = beer.heal_amount
+		beer.queue_free()
+
+	held_beer[key] = null
+	drink_timer[key] = 0.0
+
+	player_health = mini(player_max_health, player_health + heal)
+	_update_hud()
+
+	var forward := -xr_camera.global_transform.basis.z
+	GameAudio.play_sfx("drink")
+	GameAudio.play_sfx("heal", null, -4.0)
+	CombatFX.heal_effect(xr_camera.global_position + forward * 0.5 + Vector3(0, -0.1, 0), heal)
+	hand.trigger_haptic_pulse("haptic", 0.0, 0.5, 0.15, 0.0)
+
+
+func _clear_pickups() -> void:
+	for node in get_tree().get_nodes_in_group("beer_pickup"):
+		node.queue_free()
+
+	for key in ["left", "right"]:
+		var held = held_beer[key]
+
+		if held != null and is_instance_valid(held):
+			(held as Node).queue_free()
+
+		held_beer[key] = null
+		drink_timer[key] = 0.0
 
 
 func _replacement_after_pause() -> void:
@@ -858,6 +1168,7 @@ func _clear_tibos() -> void:
 	for child in enemy_root.get_children():
 		child.queue_free()
 
+	_clear_pickups()
 	active_tibos = 0
 
 
