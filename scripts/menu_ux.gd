@@ -7,6 +7,11 @@ const DIFF_EASY := "facile"
 const DIFF_NORMAL := "normal"
 const DIFF_HARD := "difficile"
 
+const MENU_DISTANCE := 1.45
+const MENU_RECENTER_ANGLE := 65.0
+const GAZE_DWELL := 1.2
+const LASER_MAX := 4.0
+
 var main: Node
 var xr_camera: XRCamera3D
 var left_hand: XRController3D
@@ -17,13 +22,16 @@ var status_label: Label3D
 var instruction_label: Label3D
 var reticle: Label3D
 
-var left_marker: MeshInstance3D
-var right_marker: MeshInstance3D
+var left_laser: Node3D
+var right_laser: Node3D
+var left_was_pressed := false
+var right_was_pressed := false
 
 var buttons: Array[Area3D] = []
 var selected_mode := MODE_COMBAT
 var selected_difficulty := DIFF_EASY
 
+var hover_target: Area3D
 var gaze_target: Area3D
 var gaze_hold := 0.0
 var activate_cooldown := 0.0
@@ -51,24 +59,21 @@ func _process(delta: float) -> void:
 	if menu_active and not was_menu:
 		_on_menu_opened()
 
-	if ui_root:
-		ui_root.visible = menu_active
-
-	if left_marker:
-		left_marker.visible = menu_active
-
-	if right_marker:
-		right_marker.visible = menu_active
+	ui_root.visible = menu_active
 
 	if reticle:
 		reticle.visible = menu_active
 
-	if menu_active:
-		_hide_legacy_menu()
-		_place_menu()
-		_update_interaction(delta)
+	if not menu_active:
+		_set_laser(left_laser, false, 0.0)
+		_set_laser(right_laser, false, 0.0)
+		_reset_hover()
+		left_was_pressed = false
+		right_was_pressed = false
 	else:
-		_reset_gaze()
+		_hide_legacy_menu()
+		_recenter_if_lost()
+		_update_interaction(delta)
 
 	was_menu = menu_active
 
@@ -97,13 +102,13 @@ func _try_bind() -> void:
 	if ui_root == null:
 		_build_ui()
 
-	if left_marker == null and left_hand:
-		left_marker = _create_hand_marker(Color(0.15, 0.75, 1.0))
-		left_hand.add_child(left_marker)
+	if left_laser == null and left_hand:
+		left_laser = _create_laser(Color(0.20, 0.80, 1.0))
+		left_hand.add_child(left_laser)
 
-	if right_marker == null and right_hand:
-		right_marker = _create_hand_marker(Color(1.0, 0.65, 0.12))
-		right_hand.add_child(right_marker)
+	if right_laser == null and right_hand:
+		right_laser = _create_laser(Color(1.0, 0.65, 0.15))
+		right_hand.add_child(right_laser)
 
 	if reticle == null:
 		reticle = Label3D.new()
@@ -111,9 +116,11 @@ func _try_bind() -> void:
 		reticle.text = "+"
 		reticle.position = Vector3(0, 0, -1.0)
 		reticle.font_size = 28
-		reticle.pixel_size = 0.0025
+		reticle.pixel_size = 0.0015
 		reticle.outline_size = 5
+		reticle.no_depth_test = true
 		reticle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		reticle.visible = false
 		xr_camera.add_child(reticle)
 
 
@@ -132,119 +139,37 @@ func _build_ui() -> void:
 	var panel_mat := StandardMaterial3D.new()
 	panel_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	panel_mat.albedo_color = Color(0.025, 0.035, 0.055, 0.88)
-	panel_mat.metallic = 0.15
-	panel_mat.roughness = 0.55
+	panel_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	panel.material_override = panel_mat
 	ui_root.add_child(panel)
 
 	_add_bar(Vector3(0, 0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(0.15, 0.65, 1.0))
 	_add_bar(Vector3(0, -0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.56, 0.10))
 
-	var title := _make_label(
-		"TIBO NARVALO",
-		Vector3(0, 0.56, 0.035),
-		50,
-		0.0030
-	)
+	var title := _make_label("TIBO NARVALO", Vector3(0, 0.56, 0.035), 64, 0.0022)
 	title.outline_size = 8
 	ui_root.add_child(title)
 
-	var subtitle := _make_label(
-		"REALITE MIXTE - QUEST 3",
-		Vector3(0, 0.43, 0.035),
-		24,
-		0.0028
-	)
-	ui_root.add_child(subtitle)
+	ui_root.add_child(_make_label("REALITE MIXTE - QUEST 3", Vector3(0, 0.43, 0.035), 32, 0.0018))
+	ui_root.add_child(_make_label("MODE", Vector3(-0.72, 0.27, 0.035), 30, 0.0018))
+	ui_root.add_child(_make_label("DIFFICULTE", Vector3(0.47, 0.27, 0.035), 30, 0.0018))
 
-	var mode_title := _make_label(
-		"MODE",
-		Vector3(-0.72, 0.27, 0.035),
-		22,
-		0.0027
-	)
-	ui_root.add_child(mode_title)
+	_add_button("COMBAT", "mode", MODE_COMBAT, Vector3(-0.72, 0.08, 0.055), Vector3(0.76, 0.24, 0.07), Color(0.10, 0.45, 0.85))
+	_add_button("MODE BERNI", "mode", MODE_BERNI, Vector3(-0.72, -0.22, 0.055), Vector3(0.76, 0.24, 0.07), Color(0.82, 0.47, 0.08))
+	_add_button("FACILE", "difficulty", DIFF_EASY, Vector3(0.47, 0.12, 0.055), Vector3(0.72, 0.20, 0.07), Color(0.10, 0.60, 0.22))
+	_add_button("NORMAL", "difficulty", DIFF_NORMAL, Vector3(0.47, -0.12, 0.055), Vector3(0.72, 0.20, 0.07), Color(0.78, 0.62, 0.08))
+	_add_button("DIFFICILE", "difficulty", DIFF_HARD, Vector3(0.47, -0.36, 0.055), Vector3(0.72, 0.20, 0.07), Color(0.72, 0.12, 0.10))
 
-	var diff_title := _make_label(
-		"DIFFICULTE",
-		Vector3(0.47, 0.27, 0.035),
-		22,
-		0.0027
-	)
-	ui_root.add_child(diff_title)
-
-	_add_button(
-		"COMBAT",
-		"mode",
-		MODE_COMBAT,
-		Vector3(-0.72, 0.08, 0.055),
-		Vector3(0.76, 0.24, 0.07),
-		Color(0.10, 0.45, 0.85)
-	)
-
-	_add_button(
-		"MODE BERNI",
-		"mode",
-		MODE_BERNI,
-		Vector3(-0.72, -0.22, 0.055),
-		Vector3(0.76, 0.24, 0.07),
-		Color(0.82, 0.47, 0.08)
-	)
-
-	_add_button(
-		"FACILE",
-		"difficulty",
-		DIFF_EASY,
-		Vector3(0.47, 0.12, 0.055),
-		Vector3(0.72, 0.20, 0.07),
-		Color(0.10, 0.60, 0.22)
-	)
-
-	_add_button(
-		"NORMAL",
-		"difficulty",
-		DIFF_NORMAL,
-		Vector3(0.47, -0.12, 0.055),
-		Vector3(0.72, 0.20, 0.07),
-		Color(0.78, 0.62, 0.08)
-	)
-
-	_add_button(
-		"DIFFICILE",
-		"difficulty",
-		DIFF_HARD,
-		Vector3(0.47, -0.36, 0.055),
-		Vector3(0.72, 0.20, 0.07),
-		Color(0.72, 0.12, 0.10)
-	)
-
-	status_label = _make_label(
-		"",
-		Vector3(-0.56, -0.48, 0.04),
-		21,
-		0.0027
-	)
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	status_label = _make_label("", Vector3(-0.72, -0.47, 0.04), 26, 0.0017)
 	ui_root.add_child(status_label)
 
-	instruction_label = _make_label(
-		"Regarde un bouton 1 seconde\nou touche-le avec un controleur",
-		Vector3(0.46, -0.56, 0.04),
-		19,
-		0.00255
-	)
+	instruction_label = _make_label("", Vector3(0.47, -0.55, 0.04), 24, 0.0016)
 	ui_root.add_child(instruction_label)
 
-	_add_button(
-		"LANCER",
-		"start",
-		"start",
-		Vector3(0, -0.67, 0.06),
-		Vector3(0.72, 0.22, 0.08),
-		Color(0.48, 0.15, 0.78)
-	)
+	_add_button("LANCER", "start", "start", Vector3(0, -0.60, 0.06), Vector3(0.62, 0.18, 0.08), Color(0.48, 0.15, 0.78))
 
 	_refresh_selection()
+	_update_instruction()
 
 
 func _add_bar(pos: Vector3, size: Vector3, color: Color) -> void:
@@ -292,12 +217,6 @@ func _add_button(
 	area.set_meta("base_color", color)
 	area.set_meta("button_size", size)
 
-	var shape_node := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = size
-	shape_node.shape = shape
-	area.add_child(shape_node)
-
 	var mesh := MeshInstance3D.new()
 	mesh.name = "Mesh"
 	var box := BoxMesh.new()
@@ -311,12 +230,7 @@ func _add_button(
 	mesh.material_override = mat
 	area.add_child(mesh)
 
-	var label := _make_label(
-		text_value,
-		Vector3(0, 0, size.z * 0.62),
-		26,
-		0.0027
-	)
+	var label := _make_label(text_value, Vector3(0, 0, size.z * 0.52 + 0.004), 34, 0.0019)
 	label.outline_size = 5
 	area.add_child(label)
 
@@ -324,24 +238,57 @@ func _add_button(
 	buttons.append(area)
 
 
-func _create_hand_marker(color: Color) -> MeshInstance3D:
-	var marker := MeshInstance3D.new()
-	marker.name = "MenuPointer"
+func _create_laser(color: Color) -> Node3D:
+	var pivot := Node3D.new()
+	pivot.name = "MenuLaser"
+	pivot.visible = false
 
-	var sphere := SphereMesh.new()
-	sphere.radius = 0.028
-	sphere.height = 0.056
-	marker.mesh = sphere
+	var beam := MeshInstance3D.new()
+	beam.name = "Beam"
+	var cylinder := CylinderMesh.new()
+	cylinder.height = 1.0
+	cylinder.top_radius = 0.0035
+	cylinder.bottom_radius = 0.0035
+	cylinder.radial_segments = 6
+	cylinder.rings = 1
+	beam.mesh = cylinder
+	beam.position = Vector3(0, 0, -0.5)
+	beam.rotation_degrees = Vector3(90, 0, 0)
 
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
-	mat.emission_enabled = true
-	mat.emission = color
-	mat.emission_energy_multiplier = 2.0
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	marker.material_override = mat
-	marker.visible = false
-	return marker
+	beam.material_override = mat
+	pivot.add_child(beam)
+
+	var dot := MeshInstance3D.new()
+	dot.name = "Dot"
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.018
+	sphere.height = 0.036
+	dot.mesh = sphere
+	dot.material_override = mat
+	pivot.add_child(dot)
+
+	return pivot
+
+
+func _set_laser(laser: Node3D, visible_value: bool, length: float) -> void:
+	if laser == null:
+		return
+
+	laser.visible = visible_value
+
+	if not visible_value:
+		return
+
+	var beam := laser.get_node("Beam") as Node3D
+	var dot := laser.get_node("Dot") as Node3D
+	var safe_length := maxf(length, 0.01)
+
+	beam.scale = Vector3(1, safe_length, 1)
+	beam.position = Vector3(0, 0, -safe_length * 0.5)
+	dot.position = Vector3(0, 0, -safe_length)
 
 
 func _on_menu_opened() -> void:
@@ -357,6 +304,7 @@ func _on_menu_opened() -> void:
 	_refresh_selection()
 	_hide_legacy_menu()
 	_place_menu()
+	activate_cooldown = 0.6
 
 
 func _hide_legacy_menu() -> void:
@@ -384,85 +332,174 @@ func _disable_legacy_areas(node: Node) -> void:
 		_disable_legacy_areas(child)
 
 
-func _place_menu() -> void:
-	if ui_root == null or xr_camera == null:
-		return
-
+func _flat_forward() -> Vector3:
 	var forward := -xr_camera.global_transform.basis.z
 	forward.y = 0.0
 
 	if forward.length_squared() < 0.01:
-		forward = Vector3.FORWARD
-	else:
-		forward = forward.normalized()
+		return Vector3.FORWARD
 
-	var target_position := xr_camera.global_position + forward * 1.90
-	target_position.y = xr_camera.global_position.y - 0.03
+	return forward.normalized()
+
+
+func _place_menu() -> void:
+	if ui_root == null or xr_camera == null:
+		return
+
+	var forward := _flat_forward()
+	var target_position := xr_camera.global_position + forward * MENU_DISTANCE
+	target_position.y = xr_camera.global_position.y - 0.12
 
 	ui_root.global_position = target_position
 
-	var look_target := xr_camera.global_position
-	look_target.y = target_position.y
+	var away := target_position + forward
+	ui_root.look_at(away, Vector3.UP)
 
-	ui_root.look_at(look_target, Vector3.UP)
+
+func _recenter_if_lost() -> void:
+	var to_menu := ui_root.global_position - xr_camera.global_position
+	to_menu.y = 0.0
+
+	if to_menu.length_squared() < 0.01:
+		return
+
+	var angle := rad_to_deg(_flat_forward().angle_to(to_menu.normalized()))
+
+	if angle > MENU_RECENTER_ANGLE:
+		_place_menu()
 
 
 func _update_interaction(delta: float) -> void:
 	activate_cooldown = maxf(0.0, activate_cooldown - delta)
 
-	var touched := _find_touched_button()
+	var left_result := _laser_hit(left_hand)
+	var right_result := _laser_hit(right_hand)
 
-	if touched != null:
-		_set_gaze_target(touched)
-		gaze_hold = 1.0
+	_set_laser(left_laser, left_hand != null, float(left_result.get("distance", LASER_MAX)))
+	_set_laser(right_laser, right_hand != null, float(right_result.get("distance", LASER_MAX)))
+
+	var left_button := left_result.get("button") as Area3D
+	var right_button := right_result.get("button") as Area3D
+
+	var left_pressed := _is_select_pressed(left_hand)
+	var right_pressed := _is_select_pressed(right_hand)
+
+	var pointed: Area3D = right_button if right_button != null else left_button
+
+	if right_pressed and not right_was_pressed and right_button != null:
+		_try_activate(right_button)
+	elif left_pressed and not left_was_pressed and left_button != null:
+		_try_activate(left_button)
+
+	left_was_pressed = left_pressed
+	right_was_pressed = right_pressed
+
+	if pointed != null:
+		_set_hover(pointed)
+		gaze_target = null
+		gaze_hold = 0.0
 	else:
 		var looked := _find_gaze_button()
 
 		if looked != gaze_target:
-			_set_gaze_target(looked)
+			gaze_target = looked
 			gaze_hold = 0.0
 
 		if gaze_target != null:
 			gaze_hold += delta
-		else:
-			gaze_hold = 0.0
 
-	_update_dwell_feedback()
+			if gaze_hold >= GAZE_DWELL:
+				_try_activate(gaze_target)
+				gaze_hold = 0.0
 
-	if gaze_target != null and gaze_hold >= 0.90 and activate_cooldown <= 0.0:
-		_activate_button(gaze_target)
-		activate_cooldown = 0.55
-		gaze_hold = 0.0
+		_set_hover(gaze_target)
+
+	_update_instruction()
 
 
-func _find_touched_button() -> Area3D:
+func _is_select_pressed(controller: XRController3D) -> bool:
+	if controller == null or not controller.get_is_active():
+		return false
+
+	if controller.is_button_pressed("trigger_click"):
+		return true
+
+	if controller.get_float("trigger") > 0.7:
+		return true
+
+	return controller.is_button_pressed("ax_button")
+
+
+func _laser_hit(controller: XRController3D) -> Dictionary:
+	var result := {"button": null, "distance": LASER_MAX}
+
+	if controller == null or not controller.get_is_active():
+		return result
+
+	var origin := controller.global_position
+	var direction := -controller.global_transform.basis.z.normalized()
+	var best := LASER_MAX
+
 	for button in buttons:
-		if _controller_inside_button(left_hand, button):
-			return button
+		var size_value = button.get_meta("button_size")
 
-		if _controller_inside_button(right_hand, button):
-			return button
+		if not size_value is Vector3:
+			continue
 
-	return null
+		var hit := _ray_box_distance(button, size_value as Vector3, origin, direction)
+
+		if hit >= 0.0 and hit < best:
+			best = hit
+			result["button"] = button
+
+	if result["button"] == null:
+		var panel_hit := _ray_box_distance(ui_root, Vector3(2.05, 1.52, 0.035), origin, direction)
+
+		if panel_hit >= 0.0:
+			best = panel_hit
+
+	result["distance"] = best
+	return result
 
 
-func _controller_inside_button(controller: XRController3D, button: Area3D) -> bool:
-	if controller == null:
-		return false
+func _ray_box_distance(node: Node3D, size: Vector3, origin: Vector3, direction: Vector3) -> float:
+	var inv := node.global_transform.affine_inverse()
+	var local_origin := inv * origin
+	var local_dir := inv.basis * direction
+	var half := size * 0.5
 
-	var size_value = button.get_meta("button_size")
+	var t_min := -INF
+	var t_max := INF
 
-	if not size_value is Vector3:
-		return false
+	for axis in 3:
+		var o: float = local_origin[axis]
+		var d: float = local_dir[axis]
+		var h: float = half[axis]
 
-	var size := size_value as Vector3
-	var local := button.to_local(controller.global_position)
+		if absf(d) < 0.000001:
+			if o < -h or o > h:
+				return -1.0
+			continue
 
-	return (
-		absf(local.x) <= size.x * 0.56
-		and absf(local.y) <= size.y * 0.70
-		and absf(local.z) <= 0.22
-	)
+		var t1: float = (-h - o) / d
+		var t2: float = (h - o) / d
+
+		if t1 > t2:
+			var swap: float = t1
+			t1 = t2
+			t2 = swap
+
+		t_min = maxf(t_min, t1)
+		t_max = minf(t_max, t2)
+
+		if t_min > t_max:
+			return -1.0
+
+	if t_max < 0.0:
+		return -1.0
+
+	var hit_local := local_origin + local_dir * maxf(t_min, 0.0)
+	return origin.distance_to(node.global_transform * hit_local)
 
 
 func _find_gaze_button() -> Area3D:
@@ -471,13 +508,13 @@ func _find_gaze_button() -> Area3D:
 
 	var forward := -xr_camera.global_transform.basis.z.normalized()
 	var best_button: Area3D
-	var best_dot := 0.982
+	var best_dot := 0.990
 
 	for button in buttons:
 		var to_button := button.global_position - xr_camera.global_position
 		var distance := to_button.length()
 
-		if distance < 0.8 or distance > 3.0:
+		if distance < 0.5 or distance > 3.0:
 			continue
 
 		var alignment := forward.dot(to_button.normalized())
@@ -489,39 +526,49 @@ func _find_gaze_button() -> Area3D:
 	return best_button
 
 
-func _set_gaze_target(new_target: Area3D) -> void:
-	if gaze_target == new_target:
+func _set_hover(new_target: Area3D) -> void:
+	if hover_target == new_target:
 		return
 
-	if gaze_target:
-		gaze_target.scale = Vector3.ONE
+	if is_instance_valid(hover_target):
+		hover_target.scale = Vector3.ONE
 
-	gaze_target = new_target
+	hover_target = new_target
 
-	if gaze_target:
-		gaze_target.scale = Vector3.ONE * 1.06
+	if hover_target:
+		hover_target.scale = Vector3.ONE * 1.08
+
+		if right_hand:
+			right_hand.trigger_haptic_pulse("haptic", 0.0, 0.15, 0.03, 0.0)
 
 
-func _reset_gaze() -> void:
-	if gaze_target:
-		gaze_target.scale = Vector3.ONE
+func _reset_hover() -> void:
+	if is_instance_valid(hover_target):
+		hover_target.scale = Vector3.ONE
 
+	hover_target = null
 	gaze_target = null
 	gaze_hold = 0.0
 
 
-func _update_dwell_feedback() -> void:
+func _update_instruction() -> void:
 	if instruction_label == null:
 		return
 
-	if gaze_target == null:
-		instruction_label.text = "Regarde un bouton 1 seconde\nou touche-le avec un controleur"
+	if gaze_target != null and hover_target == gaze_target:
+		var progress := mini(100, int((gaze_hold / GAZE_DWELL) * 100.0))
+		instruction_label.text = "Selection %d%%" % progress
 		return
 
-	var progress := mini(100, int((gaze_hold / 0.90) * 100.0))
-	var value := String(gaze_target.get_meta("value")).to_upper()
+	instruction_label.text = "Vise avec la manette\npuis appuie sur la gachette"
 
-	instruction_label.text = "%s\nSelection %d%%" % [value, progress]
+
+func _try_activate(button: Area3D) -> void:
+	if activate_cooldown > 0.0 or button == null:
+		return
+
+	activate_cooldown = 0.45
+	_activate_button(button)
 
 
 func _activate_button(button: Area3D) -> void:
@@ -530,6 +577,9 @@ func _activate_button(button: Area3D) -> void:
 
 	var button_type := String(button.get_meta("type"))
 	var value := String(button.get_meta("value"))
+
+	if right_hand:
+		right_hand.trigger_haptic_pulse("haptic", 0.0, 0.6, 0.08, 0.0)
 
 	if button_type == "mode":
 		selected_mode = value
@@ -544,6 +594,7 @@ func _activate_button(button: Area3D) -> void:
 	elif button_type == "start":
 		main.set("selected_mode", selected_mode)
 		main.set("selected_difficulty", selected_difficulty)
+		_reset_hover()
 		main.call("_start_game")
 
 
@@ -582,10 +633,10 @@ func _refresh_selection() -> void:
 		var color := base_color as Color
 
 		if selected:
-			material.albedo_color = color.lightened(0.22)
+			material.albedo_color = color.lightened(0.30)
 			material.emission_enabled = true
 			material.emission = color
-			material.emission_energy_multiplier = 0.75
+			material.emission_energy_multiplier = 0.9
 		else:
-			material.albedo_color = color
+			material.albedo_color = color.darkened(0.25)
 			material.emission_enabled = false

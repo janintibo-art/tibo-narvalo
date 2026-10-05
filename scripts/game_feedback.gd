@@ -109,44 +109,28 @@ func _try_bind() -> void:
 
 
 func _create_feedback_hud() -> void:
-	alert_label = Label3D.new()
-	alert_label.name = "TiboDirectionAlert"
-	alert_label.position = Vector3(0, 0.30, -1.35)
-	alert_label.font_size = 58
-	alert_label.outline_size = 12
-	alert_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	alert_label.text = ""
-	xr_camera.add_child(alert_label)
-
-	impact_label = Label3D.new()
-	impact_label.name = "TiboImpact"
-	impact_label.position = Vector3(0, -0.02, -1.10)
-	impact_label.font_size = 54
-	impact_label.outline_size = 11
-	impact_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	impact_label.text = ""
-	xr_camera.add_child(impact_label)
-
-	wave_label = Label3D.new()
-	wave_label.name = "TiboWave"
-	wave_label.position = Vector3(0, 0.48, -1.55)
-	wave_label.font_size = 46
-	wave_label.outline_size = 10
-	wave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	wave_label.text = ""
+	alert_label = _make_hud_label("TiboDirectionAlert", Vector3(0, 0.24, -1.4), 44)
+	impact_label = _make_hud_label("TiboImpact", Vector3(0, -0.24, -1.2), 38)
+	wave_label = _make_hud_label("TiboWave", Vector3(0, 0.34, -1.5), 56)
 	wave_label.visible = false
-	xr_camera.add_child(wave_label)
-
-	score_label = Label3D.new()
-	score_label.name = "TiboScore"
-	score_label.position = Vector3(0.72, 0.48, -1.55)
-	score_label.font_size = 34
-	score_label.outline_size = 8
-	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_label = _make_hud_label("TiboScore", Vector3(0.62, -0.40, -1.4), 30)
 	score_label.visible = false
-	xr_camera.add_child(score_label)
 
 	_update_score()
+
+
+func _make_hud_label(label_name: String, pos: Vector3, size: int) -> Label3D:
+	var label := Label3D.new()
+	label.name = label_name
+	label.position = pos
+	label.font_size = size
+	label.pixel_size = 0.001
+	label.outline_size = 8
+	label.no_depth_test = true
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.text = ""
+	xr_camera.add_child(label)
+	return label
 
 
 func _on_enemy_added(node: Node) -> void:

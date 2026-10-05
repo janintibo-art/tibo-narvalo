@@ -38,6 +38,7 @@ var shovel_hit_area: Area3D
 var prop_root: Node3D
 var beer_scenes: Array[PackedScene] = []
 
+@onready var xr_origin: XROrigin3D = $XROrigin3D
 @onready var xr_camera: XRCamera3D = $XROrigin3D/XRCamera3D
 @onready var left_hand: XRController3D = $XROrigin3D/LeftHand
 @onready var right_hand: XRController3D = $XROrigin3D/RightHand
@@ -353,9 +354,8 @@ func _show_menu() -> void:
 	right_hit_area.set_deferred("monitoring", true)
 
 	health_hud.visible = false
-	menu_root.visible = true
+	menu_root.visible = false
 
-	_place_menu()
 	_spawn_beers()
 	_update_menu_status()
 
@@ -483,7 +483,7 @@ func _spawn_one_tibo() -> void:
 	var distance := randf_range(3.2, 4.2)
 
 	var center := xr_camera.global_position
-	center.y -= 1.65
+	center.y = _floor_y()
 
 	var spawn_position := center + Vector3(
 		cos(angle) * distance,
@@ -505,8 +505,8 @@ func _spawn_one_tibo() -> void:
 		tibo.attack_damage = 14
 		tibo.max_health = 125
 
+	tibo.position = enemy_root.to_local(spawn_position)
 	enemy_root.add_child(tibo)
-	tibo.global_position = spawn_position
 
 	tibo.player_hit.connect(_on_tibo_hit_player)
 	tibo.defeated.connect(_on_tibo_defeated)
@@ -613,7 +613,7 @@ func _spawn_beers() -> void:
 		return
 
 	var center := xr_camera.global_position
-	var floor_y := center.y - 1.65
+	var floor_y := _floor_y()
 
 	for i in range(8):
 		var packed := beer_scenes[randi() % beer_scenes.size()]
@@ -643,6 +643,16 @@ func _spawn_beers() -> void:
 		beer_node.scale = Vector3.ONE * 0.22
 
 
+func _floor_y() -> float:
+	var origin_y := xr_origin.global_position.y
+	var head_height := xr_camera.global_position.y - origin_y
+
+	if head_height > 0.9 and head_height < 2.3:
+		return origin_y
+
+	return xr_camera.global_position.y - 1.65
+
+
 func _clear_tibos() -> void:
 	for child in enemy_root.get_children():
 		child.queue_free()
@@ -656,11 +666,8 @@ func _update_hud() -> void:
 
 	var remaining: int = maxi(0, wave_total - wave_defeated)
 
-	health_hud.text = "%s / %s\nVIE %d   VAGUE %d   ACTIFS %d   RESTANTS %d" % [
-		selected_mode.to_upper(),
-		selected_difficulty.to_upper(),
+	health_hud.text = "VIE %d   VAGUE %d   RESTE %d" % [
 		player_health,
 		wave,
-		active_tibos,
 		remaining
 	]

@@ -5,10 +5,13 @@ signal player_hit(damage: int)
 signal defeated(tibo: Node)
 
 @export var move_speed: float = 1.15
-@export var attack_distance: float = 1.25
+@export var attack_distance: float = 0.80
 @export var attack_repeat: float = 1.8
 @export var max_health: int = 100
 @export var attack_damage: int = 12
+
+const STAGGER_TIME := 0.45
+const KNOCKBACK_SPEED := 2.2
 
 var health: int
 var player_camera: XRCamera3D
@@ -22,33 +25,38 @@ var attack_timer: float = 0.0
 var attack_windup: float = 0.0
 var attack_in_progress := false
 var is_dead := false
+var stagger_timer: float = 0.0
+var knockback := Vector3.ZERO
 
 @onready var name_label: Label3D = $Name
 @onready var collision_shape: CollisionShape3D = $CollisionShape3D
+@onready var model_pivot: Node3D = $ModelPivot
+
 
 func _ready() -> void:
 	health = max_health
 	move_speed *= randf_range(0.88, 1.18)
 	attack_repeat *= randf_range(0.85, 1.15)
-	attack_timer = randf_range(0.4, 1.2)
+	attack_timer = randf_range(0.6, 1.4)
 
 	player_camera = get_tree().get_first_node_in_group("xr_camera") as XRCamera3D
 	animation_player = _find_animation_player(self)
 
 	if animation_player:
-		walk_animation = _find_first_animation(["walk", "run"])
-		hit_animation = _find_first_animation(["hit", "damage", "impact"])
-		death_animation = _find_first_animation(["death", "die", "dying"])
-		attack_animations = _find_animations(["attack", "hook", "kick", "punch", "strike"])
+		walk_animation = _find_first_animation(["walk"])
+		if walk_animation == &"":
+			walk_animation = _find_first_animation(["run"])
+		if walk_animation == &"":
+			walk_animation = _first_real_animation()
 
-		if attack_animations.is_empty():
-			for candidate in [&"Right_Upper_Hook_from_Guard", &"Lunge_Spin_Kick"]:
-				if animation_player.has_animation(candidate):
-					attack_animations.append(candidate)
+		hit_animation = _find_first_animation(["hit", "damage", "impact"])
+		death_animation = _find_first_animation(["death", "die", "dying", "knock"])
+		attack_animations = _find_animations(["attack", "hook", "kick", "punch", "strike"])
 
 		_play(walk_animation)
 
 	_update_label()
+
 
 func _physics_process(delta: float) -> void:
 	if is_dead:
@@ -68,13 +76,23 @@ func _physics_process(delta: float) -> void:
 	if distance > 0.05:
 		look_at(target, Vector3.UP)
 
+	if stagger_timer > 0.0:
+		stagger_timer -= delta
+		velocity = knockback
+		knockback = knockback.move_toward(Vector3.ZERO, KNOCKBACK_SPEED * 3.0 * delta)
+		move_and_slide()
+		_update_flinch()
+		return
+
+	_update_flinch()
+
 	if attack_in_progress:
 		velocity = Vector3.ZERO
 		move_and_slide()
 		attack_windup -= delta
 		if attack_windup <= 0.0:
 			attack_in_progress = false
-			if distance <= attack_distance + 0.35:
+			if distance <= attack_distance + 0.30:
 				player_hit.emit(attack_damage)
 		return
 
@@ -93,13 +111,15 @@ func _physics_process(delta: float) -> void:
 			_start_attack()
 			attack_timer = attack_repeat
 
+
 func _start_attack() -> void:
 	attack_in_progress = true
-	attack_windup = 0.42
+	attack_windup = 0.55
 
 	if not attack_animations.is_empty():
 		var chosen := attack_animations[randi() % attack_animations.size()]
 		_play(chosen, true)
+
 
 func take_hit(amount: int) -> void:
 	if is_dead:
@@ -110,25 +130,52 @@ func take_hit(amount: int) -> void:
 
 	if health <= 0:
 		_die()
-	elif hit_animation != &"":
+		return
+
+	attack_in_progress = false
+	attack_timer = maxf(attack_timer, 0.6)
+	stagger_timer = STAGGER_TIME
+
+	if player_camera:
+		var away := global_position - player_camera.global_position
+		away.y = 0.0
+		if away.length_squared() > 0.0001:
+			knockback = away.normalized() * KNOCKBACK_SPEED
+
+	if hit_animation != &"":
 		_play(hit_animation, true)
+
+
+func _update_flinch() -> void:
+	if model_pivot == null:
+		return
+
+	var amount := clampf(stagger_timer / STAGGER_TIME, 0.0, 1.0)
+	model_pivot.rotation = Vector3(-0.35 * amount, PI, 0.0)
+
 
 func _die() -> void:
 	is_dead = true
 	velocity = Vector3.ZERO
 	collision_shape.set_deferred("disabled", true)
-	name_label.text = "TIBO KO"
+	name_label.text = "KO !"
 
 	if death_animation != &"":
 		_play(death_animation, true)
+	else:
+		var tween := create_tween()
+		tween.tween_property(model_pivot, "rotation", Vector3(-1.45, PI, 0.0), 0.45)
 
 	defeated.emit(self)
-	await get_tree().create_timer(1.4).timeout
+	await get_tree().create_timer(1.6).timeout
 	queue_free()
+
 
 func _update_label() -> void:
 	if name_label:
-		name_label.text = "TIBO\n%d HP" % health
+		var title := "MEGA TIBO" if has_meta("is_boss") else "TIBO"
+		name_label.text = "%s  %d" % [title, health]
+
 
 func _find_animation_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:
@@ -139,19 +186,24 @@ func _find_animation_player(node: Node) -> AnimationPlayer:
 			return found
 	return null
 
-func _find_first_animation(keywords: Array[String]) -> StringName:
+
+func _first_real_animation() -> StringName:
 	if animation_player == null:
 		return &""
 
+	for anim_name in animation_player.get_animation_list():
+		if anim_name != &"RESET":
+			return anim_name
+
+	return &""
+
+
+func _find_first_animation(keywords: Array[String]) -> StringName:
 	var matches := _find_animations(keywords)
 	if not matches.is_empty():
 		return matches[0]
-
-	for name in animation_player.get_animation_list():
-		if name != &"RESET":
-			return name
-
 	return &""
+
 
 func _find_animations(keywords: Array[String]) -> Array[StringName]:
 	var matches: Array[StringName] = []
@@ -169,6 +221,7 @@ func _find_animations(keywords: Array[String]) -> Array[StringName]:
 				break
 
 	return matches
+
 
 func _play(animation_name: StringName, restart: bool = false) -> void:
 	if animation_player == null or animation_name == &"":

@@ -111,8 +111,8 @@ func _make_boss(node: Node, wave_number: int) -> void:
 		if health_value != null:
 			shown_health = int(health_value)
 
-		label.text = "MEGA TIBO\n%d HP" % shown_health
-		label.font_size = 46
+		label.text = "MEGA TIBO  %d" % shown_health
+		label.font_size = 56
 
 	var feedback := get_node_or_null("/root/GameFeedback")
 	if feedback:
