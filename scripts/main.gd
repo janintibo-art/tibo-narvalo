@@ -40,6 +40,7 @@ const EXIT_HOLD := 1.0
 
 var run_serial := 0
 var hand_speed := {"left": 0.0, "right": 0.0, "shovel": 0.0}
+var hand_velocity := {"left": Vector3.ZERO, "right": Vector3.ZERO, "shovel": Vector3.ZERO}
 var last_hand_pos := {}
 var last_whoosh_ms := {"left": 0, "right": 0, "shovel": 0}
 var combo := 0
@@ -643,6 +644,31 @@ func is_guarding() -> bool:
 	return guarding and game_state == "playing"
 
 
+func swing_threat(pos: Vector3) -> bool:
+	for key in ["left", "right", "shovel"]:
+		if key == "shovel" and selected_mode != MODE_BERNI:
+			continue
+
+		if key == "right" and selected_mode == MODE_BERNI:
+			continue
+
+		if float(hand_speed[key]) < 2.0:
+			continue
+
+		var to_target := pos - _hand_position(key)
+		var dist := to_target.length()
+
+		if dist > 1.3 or dist < 0.01:
+			continue
+
+		var velocity_value: Vector3 = hand_velocity[key]
+
+		if velocity_value.length() > 0.01 and velocity_value.normalized().dot(to_target / dist) > 0.5:
+			return true
+
+	return false
+
+
 func is_ducking() -> bool:
 	return ducking and game_state == "playing"
 
@@ -711,6 +737,7 @@ func _update_hand_speeds(delta: float) -> void:
 func _track_speed(key: String, pos: Vector3, active: bool, delta: float) -> void:
 	if not active:
 		hand_speed[key] = 0.0
+		hand_velocity[key] = Vector3.ZERO
 		last_hand_pos.erase(key)
 		return
 
@@ -718,6 +745,9 @@ func _track_speed(key: String, pos: Vector3, active: bool, delta: float) -> void
 		var previous: Vector3 = last_hand_pos[key]
 		var raw := minf(pos.distance_to(previous) / delta, 12.0)
 		hand_speed[key] = lerpf(float(hand_speed[key]), raw, 0.6)
+
+		var old_velocity: Vector3 = hand_velocity[key]
+		hand_velocity[key] = old_velocity.lerp((pos - previous) / delta, 0.6)
 
 	last_hand_pos[key] = pos
 
@@ -776,7 +806,7 @@ func _hit_with(area: Area3D, key: String, base_damage: int, min_speed: float, is
 
 		var enemy := body as TiboEnemy
 
-		if enemy.is_dead:
+		if enemy.is_dead or enemy.is_dodging():
 			continue
 
 		var meta_key := "last_hit_" + key

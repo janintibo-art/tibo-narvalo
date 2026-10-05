@@ -50,6 +50,18 @@ var base_model_scale := Vector3.ONE
 var shadow: MeshInstance3D
 var shadow_material: StandardMaterial3D
 
+var run_animation: StringName = &""
+var strafe_dir := 1.0
+var strafe_timer := 0.0
+var retreat_timer := 0.0
+var dash_state := 0
+var dash_timer := 0.0
+var dash_cooldown := 0.0
+var dash_lean := 0.0
+var dodge_timer := 0.0
+var dodge_cooldown := 0.0
+var dodge_velocity := Vector3.ZERO
+
 static var shadow_texture: ImageTexture
 var flash_color := Color(1.0, 0.1, 0.05)
 
@@ -75,6 +87,9 @@ func _ready() -> void:
 	move_speed *= randf_range(0.88, 1.18)
 	attack_repeat *= randf_range(0.85, 1.15)
 	attack_timer = randf_range(0.6, 1.4)
+	dash_cooldown = randf_range(2.0, 4.0)
+	strafe_dir = 1.0 if randf() < 0.5 else -1.0
+	strafe_timer = randf_range(1.0, 2.5)
 
 	player_camera = get_tree().get_first_node_in_group("xr_camera") as XRCamera3D
 	animation_player = _find_animation_player(self)
@@ -85,6 +100,10 @@ func _ready() -> void:
 			walk_animation = _find_first_animation(["run"])
 		if walk_animation == &"":
 			walk_animation = _first_real_animation()
+
+		run_animation = _find_first_animation(["run"])
+		if run_animation == &"":
+			run_animation = walk_animation
 
 		hit_animation = _find_first_animation(["hit", "damage", "impact"])
 		death_animation = _find_first_animation(["death", "die", "dying", "knock"])
@@ -141,6 +160,21 @@ func _physics_process(delta: float) -> void:
 
 	_update_flinch()
 
+	dodge_cooldown = maxf(0.0, dodge_cooldown - delta)
+	dash_cooldown = maxf(0.0, dash_cooldown - delta)
+	strafe_timer -= delta
+
+	if strafe_timer <= 0.0:
+		strafe_dir = 1.0 if randf() < 0.5 else -1.0
+		strafe_timer = randf_range(1.2, 2.8)
+
+	if dodge_timer > 0.0:
+		dodge_timer -= delta
+		velocity = dodge_velocity
+		dodge_velocity = dodge_velocity.lerp(Vector3.ZERO, minf(1.0, delta * 5.0))
+		move_and_slide()
+		return
+
 	if attack_in_progress:
 		velocity = Vector3.ZERO
 		move_and_slide()
@@ -168,26 +202,187 @@ func _physics_process(delta: float) -> void:
 					player_hit.emit(attack_damage)
 
 			high_attack = false
+
+			if not is_thrower and randf() < 0.4:
+				retreat_timer = randf_range(0.5, 0.9)
+		return
+
+	if dash_state != 0:
+		_dash_update(delta, to_player, distance)
+		return
+
+	if _try_dodge(to_player):
 		return
 
 	if is_thrower:
 		_thrower_move(delta, to_player, distance)
 		return
 
-	if distance > attack_distance:
-		var direction := to_player.normalized()
-		velocity = direction * move_speed
+	_melee_move(delta, to_player, distance)
+
+
+func _melee_move(delta: float, to_player: Vector3, distance: float) -> void:
+	var direction := to_player.normalized()
+	var tangent := Vector3(direction.z, 0.0, -direction.x) * strafe_dir
+
+	if retreat_timer > 0.0:
+		retreat_timer -= delta
+		velocity = (-direction + tangent * 0.3).normalized() * move_speed * 1.1
 		velocity.y = 0.0
 		move_and_slide()
-		_play(walk_animation)
-		attack_timer = max(attack_timer - delta, 0.0)
-	else:
-		velocity = Vector3.ZERO
+		_play_move(walk_animation, -clampf(velocity.length() / 1.15, 0.6, 2.0))
+		return
+
+	if distance > attack_distance:
+		if _can_dash(distance) and randf() < delta * 0.6:
+			_start_dash()
+			return
+
+		var curve := 0.55 if distance < 3.2 else 0.0
+		var move_direction := (direction + tangent * curve).normalized()
+		velocity = move_direction * move_speed
+		velocity.y = 0.0
 		move_and_slide()
+		_play_move_forward()
+		attack_timer = maxf(attack_timer - delta, 0.0)
+	else:
+		var preferred := attack_distance * 0.85
+		var radial := direction * clampf((distance - preferred) * 2.0, -move_speed, move_speed)
+		velocity = tangent * move_speed * 0.5 + radial
+		velocity.y = 0.0
+		move_and_slide()
+		_play_move(walk_animation, clampf(velocity.length() / 1.15, 0.5, 1.6))
+
 		attack_timer -= delta
+
 		if attack_timer <= 0.0:
 			_start_attack()
 			attack_timer = attack_repeat
+
+
+func _play_move_forward() -> void:
+	var animation_name := run_animation if kind == "rapide" else walk_animation
+	var reference := 3.0 if animation_name == run_animation and run_animation != walk_animation else 1.15
+	_play_move(animation_name, clampf(velocity.length() / reference, 0.6, 2.2))
+
+
+func _can_dash(distance: float) -> bool:
+	if is_thrower or dash_cooldown > 0.0 or attack_in_progress:
+		return false
+
+	if distance < 1.8 or distance > 3.6:
+		return false
+
+	var main := get_tree().current_scene
+
+	if main == null:
+		return false
+
+	var wave_value = main.get("wave")
+	return wave_value != null and int(wave_value) >= 2
+
+
+func _start_dash() -> void:
+	dash_state = 1
+	dash_timer = 0.4
+	name_label.modulate = Color(1.0, 0.7, 0.2)
+	GameAudio.play_sfx("windup", global_position + Vector3(0, 1.0, 0), -8.0, 1.5)
+
+
+func _dash_speed() -> float:
+	if kind == "rapide":
+		return 5.5
+
+	if kind == "costaud":
+		return 3.9
+
+	return 4.6
+
+
+func _dash_update(delta: float, to_player: Vector3, distance: float) -> void:
+	var direction := to_player.normalized()
+	dash_timer -= delta
+
+	if dash_state == 1:
+		velocity = Vector3.ZERO
+		move_and_slide()
+
+		var k := 1.0 - clampf(dash_timer / 0.4, 0.0, 1.0)
+		dash_lean = 0.35 * k
+		_set_tint(Color(1.0, 0.7, 0.2, 0.25 * k))
+		_play_move(run_animation, 1.6)
+		_update_flinch()
+
+		if dash_timer <= 0.0:
+			dash_state = 2
+			dash_timer = 0.35
+			GameAudio.play_sfx("whoosh", global_position + Vector3(0, 1.0, 0), -2.0, 0.7)
+			CombatFX.spark(global_position + Vector3(0, 0.1, 0), Color(0.75, 0.65, 0.5), 8)
+	else:
+		velocity = direction * _dash_speed()
+		velocity.y = 0.0
+		move_and_slide()
+		_play_move(run_animation, 1.4)
+		_update_flinch()
+
+		if dash_timer <= 0.0 or distance <= attack_distance * 0.95:
+			_end_dash()
+
+
+func _end_dash() -> void:
+	dash_state = 0
+	dash_lean = 0.0
+	dash_cooldown = randf_range(4.0, 7.0)
+	attack_timer = minf(attack_timer, 0.12)
+	_end_warning()
+
+
+func _try_dodge(to_player: Vector3) -> bool:
+	if dodge_cooldown > 0.0 or stagger_timer > 0.0:
+		return false
+
+	var main := get_tree().current_scene
+
+	if main == null or not main.has_method("swing_threat"):
+		return false
+
+	if not main.call("swing_threat", global_position + Vector3(0, 1.1, 0)):
+		return false
+
+	dodge_cooldown = 2.8
+
+	var chance := 0.30
+	var difficulty_value = main.get("selected_difficulty")
+
+	if difficulty_value != null and String(difficulty_value) == "facile":
+		chance = 0.15
+
+	if kind == "rapide":
+		chance += 0.15
+	elif kind == "costaud":
+		chance *= 0.5
+
+	if has_meta("is_boss"):
+		chance *= 0.4
+
+	if randf() > chance:
+		return false
+
+	var direction := to_player.normalized()
+	var side := Vector3(direction.z, 0.0, -direction.x) * (1.0 if randf() < 0.5 else -1.0)
+	dodge_velocity = (side * 0.85 - direction * 0.5).normalized() * 4.4
+	dodge_timer = 0.28
+	attack_timer = minf(attack_timer, 0.4)
+
+	GameAudio.play_sfx("whoosh", global_position + Vector3(0, 1.0, 0), -3.0, 1.4)
+	CombatFX.float_text(global_position + Vector3(0, 2.3 * model_pivot.scale.y, 0), "RATE !", Color(0.8, 0.9, 1.0), 60)
+	CombatFX.spark(global_position + Vector3(0, 0.1, 0), Color(0.75, 0.7, 0.6), 8)
+	_play_move(walk_animation, 2.0)
+	return true
+
+
+func is_dodging() -> bool:
+	return dodge_timer > 0.04
 
 
 func _thrower_move(delta: float, to_player: Vector3, distance: float) -> void:
@@ -195,12 +390,14 @@ func _thrower_move(delta: float, to_player: Vector3, distance: float) -> void:
 
 	if distance > THROW_RANGE_MAX:
 		velocity = direction * move_speed
-		_play(walk_animation)
+		_play_move(walk_animation, clampf(velocity.length() / 1.15, 0.6, 2.0))
 	elif distance < THROW_RANGE_MIN:
 		velocity = -direction * move_speed * 0.8
-		_play(walk_animation)
+		_play_move(walk_animation, -clampf(velocity.length() / 1.15, 0.6, 2.0))
 	else:
-		velocity = Vector3.ZERO
+		var tangent := Vector3(direction.z, 0.0, -direction.x) * strafe_dir
+		velocity = tangent * move_speed * 0.6
+		_play_move(walk_animation, 0.8)
 
 	velocity.y = 0.0
 	move_and_slide()
@@ -341,6 +538,9 @@ func take_hit(amount: int, power: float = 1.0) -> void:
 		return
 
 	attack_in_progress = false
+	dash_state = 0
+	dash_lean = 0.0
+	retreat_timer = 0.0
 	name_label.modulate = base_label_color
 	attack_timer = maxf(attack_timer, 0.6)
 	stagger_total = STAGGER_TIME * clampf(power, 0.8, 1.3)
@@ -361,7 +561,7 @@ func _update_flinch() -> void:
 		return
 
 	var amount := clampf(stagger_timer / stagger_total, 0.0, 1.0)
-	model_pivot.rotation = Vector3(-0.35 * amount, PI, 0.0)
+	model_pivot.rotation = Vector3(-0.35 * amount + dash_lean, PI, 0.0)
 
 
 func _die() -> void:
@@ -645,9 +845,21 @@ func _find_animations(keywords: Array[String]) -> Array[StringName]:
 	return matches
 
 
+func _play_move(animation_name: StringName, speed: float = 1.0) -> void:
+	if animation_player == null or animation_name == &"":
+		return
+
+	animation_player.speed_scale = speed
+
+	if animation_player.current_animation != animation_name or not animation_player.is_playing():
+		animation_player.play(animation_name, 0.15, 1.0, speed < 0.0)
+
+
 func _play(animation_name: StringName, restart: bool = false) -> void:
 	if animation_player == null or animation_name == &"":
 		return
+
+	animation_player.speed_scale = 1.0
 
 	if restart or animation_player.current_animation != animation_name or not animation_player.is_playing():
 		animation_player.play(animation_name)
