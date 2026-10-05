@@ -5,6 +5,8 @@ run/main_scene="res://scenes/Main.tscn"
 
 [autoload]
 
+GameAudio="*res://scripts/game_audio.gd"
+CombatFX="*res://scripts/combat_fx.gd"
 GameFeedback="*res://scripts/game_feedback.gd"
 BossDirector="*res://scripts/boss_director.gd"
 MenuUX="*res://scripts/menu_ux.gd"

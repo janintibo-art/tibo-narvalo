@@ -193,24 +193,14 @@ func _track_enemy_health() -> void:
 
 
 func _enemy_hit_feedback(enemy: Node3D, damage: int) -> void:
-	var controller := _nearest_controller(enemy)
-
-	if controller:
-		var amplitude := 0.55
-		var duration := 0.08
-
-		if damage >= 90:
-			amplitude = 1.0
-			duration = 0.14
-
-		controller.trigger_haptic_pulse("haptic", 0.0, amplitude, duration, 0.0)
-
 	impact_serial += 1
 	var this_impact := impact_serial
 
 	if impact_label:
 		if damage >= 90:
 			impact_label.text = "PELLE !  %d" % damage
+		elif damage >= 65:
+			impact_label.text = "BAM !  %d" % damage
 		else:
 			impact_label.text = "PAF !  %d" % damage
 
@@ -317,6 +307,21 @@ func _announce_enemy(node: Node) -> void:
 		alert_label.text = ""
 
 
+func show_combo(count: int) -> void:
+	if alert_label == null or count < 2:
+		return
+
+	alert_serial += 1
+	var this_alert := alert_serial
+
+	alert_label.text = "COMBO x%d" % count
+
+	await get_tree().create_timer(0.9).timeout
+
+	if this_alert == alert_serial and alert_label:
+		alert_label.text = ""
+
+
 func _show_wave(wave_number: int) -> void:
 	if wave_label == null:
 		return
@@ -325,6 +330,7 @@ func _show_wave(wave_number: int) -> void:
 	var this_wave := wave_serial
 
 	wave_label.text = "VAGUE %d" % wave_number
+	GameAudio.play_sfx("wave")
 
 	await get_tree().create_timer(1.10).timeout
 

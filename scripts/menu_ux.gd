@@ -584,11 +584,13 @@ func _activate_button(button: Area3D) -> void:
 	if button_type == "mode":
 		selected_mode = value
 		main.set("selected_mode", value)
+		GameAudio.play_sfx("click")
 		_refresh_selection()
 
 	elif button_type == "difficulty":
 		selected_difficulty = value
 		main.set("selected_difficulty", value)
+		GameAudio.play_sfx("click")
 		_refresh_selection()
 
 	elif button_type == "start":

@@ -121,4 +121,5 @@ func _make_boss(node: Node, wave_number: int) -> void:
 		if alert is Label3D:
 			(alert as Label3D).text = "BOSS : MEGA TIBO !"
 
+	GameAudio.play_sfx("boss")
 	print("Tibo Narvalo : MEGA TIBO vague %d." % wave_number)

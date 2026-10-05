@@ -31,6 +31,22 @@ var shovel_damage := 100
 var game_over := false
 var menu_input_locked := false
 
+const PUNCH_MIN_SPEED := 1.0
+const SHOVEL_MIN_SPEED := 1.4
+const WHOOSH_SPEED := 2.6
+const HIT_COOLDOWN_MS := 300
+const COMBO_WINDOW := 1.6
+const EXIT_HOLD := 1.0
+
+var run_serial := 0
+var hand_speed := {"left": 0.0, "right": 0.0, "shovel": 0.0}
+var last_hand_pos := {}
+var last_whoosh_ms := {"left": 0, "right": 0, "shovel": 0}
+var combo := 0
+var last_hit_time := 0.0
+var exit_hold := 0.0
+var hud_hint := ""
+
 var menu_root: Node3D
 var menu_status: Label3D
 var shovel_root: Node3D
@@ -54,8 +70,8 @@ func _ready() -> void:
 	left_hit_area.collision_mask = 3
 	right_hit_area.collision_mask = 3
 
-	left_hit_area.body_entered.connect(_on_hand_body_entered.bind("left"))
-	right_hit_area.body_entered.connect(_on_hand_body_entered.bind("right"))
+	left_hand.button_pressed.connect(_on_controller_button)
+	right_hand.button_pressed.connect(_on_controller_button)
 
 	left_hit_area.area_entered.connect(_on_menu_area_entered)
 	right_hit_area.area_entered.connect(_on_menu_area_entered)
@@ -101,7 +117,6 @@ func _create_runtime_objects() -> void:
 	shovel_root.visible = false
 
 	shovel_hit_area = shovel_root.get_node("HitArea") as Area3D
-	shovel_hit_area.body_entered.connect(_on_shovel_body_entered)
 	shovel_hit_area.monitoring = false
 
 
@@ -344,6 +359,10 @@ func _show_menu() -> void:
 	game_over = false
 	wave_transition_pending = false
 	menu_input_locked = false
+	run_serial += 1
+	combo = 0
+	exit_hold = 0.0
+	hud_hint = ""
 
 	_clear_tibos()
 
@@ -420,6 +439,14 @@ func _start_game() -> void:
 	game_state = "playing"
 	game_over = false
 	wave_transition_pending = false
+	run_serial += 1
+	combo = 0
+	exit_hold = 0.0
+
+	GameAudio.play_sfx("start")
+
+	hud_hint = "MENU (manette gauche) = accueil"
+	_hide_hint_later(run_serial)
 
 	menu_root.visible = false
 	health_hud.visible = true
@@ -516,32 +543,196 @@ func _spawn_one_tibo() -> void:
 	_update_hud()
 
 
-func _on_hand_body_entered(body: Node3D, hand_name: String) -> void:
+func _physics_process(delta: float) -> void:
+	_update_hand_speeds(delta)
+
 	if game_state != "playing" or game_over:
+		exit_hold = 0.0
 		return
 
-	if not body is TiboEnemy:
+	_play_swing_sounds()
+	_process_hits()
+	_check_exit_hold(delta)
+
+
+func _update_hand_speeds(delta: float) -> void:
+	if delta <= 0.0:
 		return
 
-	var damage := hand_damage
+	_track_speed("left", left_hand.global_position, left_hand.get_is_active(), delta)
+	_track_speed("right", right_hand.global_position, right_hand.get_is_active(), delta)
 
-	if selected_mode == MODE_BERNI and hand_name == "right":
+	if shovel_hit_area != null:
+		_track_speed("shovel", shovel_hit_area.global_position, right_hand.get_is_active(), delta)
+
+
+func _track_speed(key: String, pos: Vector3, active: bool, delta: float) -> void:
+	if not active:
+		hand_speed[key] = 0.0
+		last_hand_pos.erase(key)
 		return
 
-	(body as TiboEnemy).take_hit(damage)
+	if last_hand_pos.has(key):
+		var previous: Vector3 = last_hand_pos[key]
+		var raw := minf(pos.distance_to(previous) / delta, 12.0)
+		hand_speed[key] = lerpf(float(hand_speed[key]), raw, 0.6)
+
+	last_hand_pos[key] = pos
 
 
-func _on_shovel_body_entered(body: Node3D) -> void:
-	if game_state != "playing" or game_over:
+func _hand_position(key: String) -> Vector3:
+	if key == "left":
+		return left_hand.global_position
+
+	if key == "shovel" and shovel_hit_area != null:
+		return shovel_hit_area.global_position
+
+	return right_hand.global_position
+
+
+func _play_swing_sounds() -> void:
+	var now := Time.get_ticks_msec()
+
+	for key in ["left", "right", "shovel"]:
+		if key == "shovel" and selected_mode != MODE_BERNI:
+			continue
+
+		if key == "right" and selected_mode == MODE_BERNI:
+			continue
+
+		var speed: float = hand_speed[key]
+
+		if speed >= WHOOSH_SPEED and now - int(last_whoosh_ms[key]) > 400:
+			last_whoosh_ms[key] = now
+			GameAudio.play_sfx("whoosh", _hand_position(key), clampf(speed - 8.0, -8.0, 0.0))
+
+
+func _process_hits() -> void:
+	if selected_mode == MODE_BERNI:
+		_hit_with(shovel_hit_area, "shovel", shovel_damage, SHOVEL_MIN_SPEED, true)
+		_hit_with(left_hit_area, "left", hand_damage, PUNCH_MIN_SPEED, false)
+	else:
+		_hit_with(left_hit_area, "left", hand_damage, PUNCH_MIN_SPEED, false)
+		_hit_with(right_hit_area, "right", hand_damage, PUNCH_MIN_SPEED, false)
+
+
+func _hit_with(area: Area3D, key: String, base_damage: int, min_speed: float, is_shovel: bool) -> void:
+	if area == null or not area.monitoring:
 		return
 
-	if selected_mode != MODE_BERNI:
+	var speed: float = hand_speed[key]
+
+	if speed < min_speed:
 		return
 
-	if not body is TiboEnemy:
+	for body in area.get_overlapping_bodies():
+		if not body is TiboEnemy:
+			continue
+
+		var enemy := body as TiboEnemy
+
+		if enemy.is_dead:
+			continue
+
+		var meta_key := "last_hit_" + key
+		var now := Time.get_ticks_msec()
+
+		if now - int(enemy.get_meta(meta_key, -10000)) < HIT_COOLDOWN_MS:
+			continue
+
+		enemy.set_meta(meta_key, now)
+		_land_hit(enemy, key, area.global_position, base_damage, speed, is_shovel)
+
+
+func _land_hit(
+	enemy: TiboEnemy,
+	key: String,
+	hit_pos: Vector3,
+	base_damage: int,
+	speed: float,
+	is_shovel: bool
+) -> void:
+	var power := clampf(speed / 3.0, 0.5, 1.6)
+	var damage := maxi(1, int(round(base_damage * power)))
+	var strong := power >= 1.15
+
+	enemy.take_hit(damage, power)
+
+	CombatFX.hit_effect(hit_pos, damage, strong, is_shovel)
+
+	if is_shovel:
+		GameAudio.play_sfx("shovel", hit_pos)
+	elif strong:
+		GameAudio.play_sfx("punch_strong", hit_pos)
+	else:
+		GameAudio.play_sfx("punch", hit_pos, -2.0)
+
+	var controller: XRController3D = left_hand if key == "left" else right_hand
+	var amplitude := clampf(0.35 + 0.45 * power, 0.0, 1.0)
+	var duration := 0.06 + 0.06 * power
+	controller.trigger_haptic_pulse("haptic", 0.0, amplitude, duration, 0.0)
+
+	_register_combo()
+
+
+func _register_combo() -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+
+	if now - last_hit_time <= COMBO_WINDOW:
+		combo += 1
+	else:
+		combo = 1
+
+	last_hit_time = now
+
+	if combo >= 2:
+		GameFeedback.show_combo(combo)
+
+	if combo >= 3:
+		GameAudio.play_sfx("combo", null, -4.0, 1.0 + minf(combo, 8) * 0.04)
+
+
+func _check_exit_hold(delta: float) -> void:
+	var both_pressed := (
+		left_hand.get_is_active()
+		and right_hand.get_is_active()
+		and left_hand.is_button_pressed("ax_button")
+		and right_hand.is_button_pressed("ax_button")
+	)
+
+	if both_pressed:
+		exit_hold += delta
+		health_hud.text = "RETOUR ACCUEIL %d%%" % mini(100, int(exit_hold / EXIT_HOLD * 100.0))
+
+		if exit_hold >= EXIT_HOLD:
+			exit_hold = 0.0
+			_go_home()
+	elif exit_hold > 0.0:
+		exit_hold = 0.0
+		_update_hud()
+
+
+func _on_controller_button(button_name: String) -> void:
+	if button_name == "menu_button":
+		_go_home()
+
+
+func _go_home() -> void:
+	if game_state != "playing" and game_state != "game_over":
 		return
 
-	(body as TiboEnemy).take_hit(shovel_damage)
+	GameAudio.play_sfx("back")
+	_show_menu()
+
+
+func _hide_hint_later(serial: int) -> void:
+	await get_tree().create_timer(7.0).timeout
+
+	if serial == run_serial and hud_hint != "":
+		hud_hint = ""
+
+		if game_state == "playing" and not game_over:
+			_update_hud()
 
 
 func _on_tibo_hit_player(damage: int) -> void:
@@ -549,7 +740,11 @@ func _on_tibo_hit_player(damage: int) -> void:
 		return
 
 	player_health = max(0, player_health - damage)
+	combo = 0
 	_update_hud()
+
+	GameAudio.play_sfx("hurt")
+	CombatFX.player_hurt(damage)
 
 	if player_health <= 0:
 		call_deferred("_game_over")
@@ -572,16 +767,18 @@ func _on_tibo_defeated(_tibo: Node) -> void:
 
 
 func _replacement_after_pause() -> void:
+	var serial := run_serial
 	await get_tree().create_timer(0.75).timeout
 
-	if game_state == "playing" and not game_over:
+	if serial == run_serial and game_state == "playing" and not game_over:
 		_fill_active_slots()
 
 
 func _next_wave_after_pause() -> void:
+	var serial := run_serial
 	await get_tree().create_timer(1.75).timeout
 
-	if game_state == "playing" and not game_over:
+	if serial == run_serial and game_state == "playing" and not game_over:
 		_start_wave()
 
 
@@ -600,9 +797,13 @@ func _game_over() -> void:
 
 	health_hud.visible = true
 	health_hud.text = "LES TIBO T'ONT EU !\nRetour au menu..."
+	GameAudio.play_sfx("gameover")
 
+	var serial := run_serial
 	await get_tree().create_timer(3.0).timeout
-	_show_menu()
+
+	if serial == run_serial and game_state == "game_over":
+		_show_menu()
 
 
 func _spawn_beers() -> void:
@@ -666,8 +867,13 @@ func _update_hud() -> void:
 
 	var remaining: int = maxi(0, wave_total - wave_defeated)
 
-	health_hud.text = "VIE %d   VAGUE %d   RESTE %d" % [
+	var hud_text := "VIE %d   VAGUE %d   RESTE %d" % [
 		player_health,
 		wave,
 		remaining
 	]
+
+	if hud_hint != "":
+		hud_text += "\n" + hud_hint
+
+	health_hud.text = hud_text

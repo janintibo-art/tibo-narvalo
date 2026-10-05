@@ -22,7 +22,7 @@ rotation = Vector3(0, 3.1415927, 0)
 [node name="Model" parent="ModelPivot" instance=ExtResource("2_model")]
 
 [node name="Name" type="Label3D" parent="."]
-position = Vector3(0, 1.88, 0)
+position = Vector3(0, 2.0, 0)
 pixel_size = 0.0015
 text = "TIBO  100"
 font_size = 48
