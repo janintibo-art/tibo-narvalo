@@ -8,7 +8,7 @@ signal hit_player(damage: int)
 
 const SPEED := 4.2
 const RETURN_SPEED := 7.5
-const PLAYER_HIT_RADIUS := 0.30
+const PLAYER_HIT_RADIUS := 0.26
 const BOTTLE_PATHS := ["res://assets/props/Bier1.glb", "res://assets/props/Bier2.glb"]
 
 var damage := 8

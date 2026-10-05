@@ -41,6 +41,16 @@ var windup_time: float = ATTACK_WINDUP
 var warn_color := Color(1.0, 0.45, 0.05)
 var base_label_color := Color.WHITE
 var kind_title := "TIBO"
+var base_warn_color := Color(1.0, 0.45, 0.05)
+var high_attack := false
+var windup_current: float = ATTACK_WINDUP
+var stun_timer := 0.0
+var spawn_timer := 0.0
+var base_model_scale := Vector3.ONE
+var shadow: MeshInstance3D
+var shadow_material: StandardMaterial3D
+
+static var shadow_texture: ImageTexture
 var flash_color := Color(1.0, 0.1, 0.05)
 
 var meshes: Array[MeshInstance3D] = []
@@ -60,6 +70,7 @@ var bar_fill_material: StandardMaterial3D
 
 func _ready() -> void:
 	_apply_kind()
+	base_model_scale = model_pivot.scale
 	health = max_health
 	move_speed *= randf_range(0.88, 1.18)
 	attack_repeat *= randf_range(0.85, 1.15)
@@ -91,6 +102,8 @@ func _ready() -> void:
 	name_label.modulate = base_label_color
 
 	_update_label()
+	_build_shadow()
+	_play_spawn()
 
 
 func _physics_process(delta: float) -> void:
@@ -111,6 +124,13 @@ func _physics_process(delta: float) -> void:
 	if distance > 0.05:
 		look_at(target, Vector3.UP)
 
+	stun_timer = maxf(0.0, stun_timer - delta)
+
+	if spawn_timer > 0.0:
+		spawn_timer -= delta
+		velocity = Vector3.ZERO
+		return
+
 	if stagger_timer > 0.0:
 		stagger_timer -= delta
 		velocity = knockback
@@ -126,7 +146,7 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		attack_windup -= delta
 
-		var progress := 1.0 - clampf(attack_windup / windup_time, 0.0, 1.0)
+		var progress := 1.0 - clampf(attack_windup / windup_current, 0.0, 1.0)
 		var pulse := 0.75 + 0.25 * sin(progress * 38.0)
 		_set_tint(Color(warn_color.r, warn_color.g, warn_color.b, 0.55 * progress * pulse))
 
@@ -139,10 +159,15 @@ func _physics_process(delta: float) -> void:
 			elif distance <= attack_distance + 0.30:
 				var main := get_tree().current_scene
 
-				if main != null and main.has_method("is_guarding") and main.call("is_guarding"):
-					recoil()
+				if high_attack and main != null and main.has_method("is_ducking") and main.call("is_ducking"):
+					_whiff()
+				else:
+					if main != null and main.has_method("is_guarding") and main.call("is_guarding"):
+						recoil()
 
-				player_hit.emit(attack_damage)
+					player_hit.emit(attack_damage)
+
+			high_attack = false
 		return
 
 	if is_thrower:
@@ -231,14 +256,71 @@ func recoil() -> void:
 
 func _start_attack() -> void:
 	attack_in_progress = true
-	attack_windup = windup_time
+
+	var main := get_tree().current_scene
+	var wave_number := 0
+	var easy := false
+
+	if main != null:
+		var wave_value = main.get("wave")
+		var difficulty_value = main.get("selected_difficulty")
+
+		if wave_value != null:
+			wave_number = int(wave_value)
+
+		easy = difficulty_value != null and String(difficulty_value) == "facile"
+
+	var high_chance := 0.25 if easy else 0.35
+
+	if kind == "costaud":
+		high_chance *= 0.7
+
+	high_attack = not is_thrower and wave_number >= 2 and randf() < high_chance
+
+	if high_attack:
+		windup_current = maxf(windup_time, 0.8)
+		warn_color = Color(1.0, 0.95, 0.2)
+		GameFeedback.show_message("BAISSE-TOI !", 0.9)
+		GameAudio.play_sfx("alert", null, -2.0)
+	else:
+		windup_current = windup_time
+		warn_color = base_warn_color
+
+	attack_windup = windup_current
 
 	name_label.modulate = Color(1.0, 0.35, 0.25)
 	GameAudio.play_sfx("windup", global_position + Vector3(0, 1.2, 0), -4.0)
 
 	if not attack_animations.is_empty():
-		var chosen := attack_animations[randi() % attack_animations.size()]
-		_play(chosen, true)
+		_play(_pick_attack_animation(high_attack), true)
+
+
+func _pick_attack_animation(high: bool) -> StringName:
+	var wanted := "kick" if high else "hook"
+
+	for animation_name in attack_animations:
+		if String(animation_name).to_lower().contains(wanted):
+			return animation_name
+
+	return attack_animations[randi() % attack_animations.size()]
+
+
+func _whiff() -> void:
+	stun_timer = 1.3
+	stagger_total = 1.0
+	stagger_timer = 1.0
+	knockback = Vector3.ZERO
+	attack_timer = maxf(attack_timer, 1.2)
+	_flash_hit(Color(1.0, 0.9, 0.2))
+
+	var head := global_position + Vector3(0, 2.3 * model_pivot.scale.y, 0)
+	GameFeedback.show_message("ESQUIVE !", 0.9)
+	GameAudio.play_sfx("whoosh", global_position + Vector3(0, 1.2, 0), 0.0, 1.2)
+	CombatFX.float_text(head, "ETOURDI !", Color(1.0, 0.9, 0.2), 70)
+
+
+func damage_multiplier() -> float:
+	return 1.5 if stun_timer > 0.0 else 1.0
 
 
 func _end_warning() -> void:
@@ -289,8 +371,14 @@ func _die() -> void:
 	name_label.text = "KO !"
 	name_label.modulate = Color(1.0, 0.9, 0.3)
 
+	stun_timer = 0.0
+
 	if bar_fill:
 		bar_fill.get_parent().visible = false
+
+	if shadow_material:
+		var fade := create_tween()
+		fade.tween_property(shadow_material, "albedo_color:a", 0.0, 0.9)
 
 	GameAudio.play_sfx("ko", global_position + Vector3(0, 1.0, 0))
 	CombatFX.ko_effect(global_position + Vector3(0, 1.1, 0))
@@ -349,7 +437,58 @@ func _apply_kind() -> void:
 		max_health = int(max_health * 0.8)
 		attack_repeat = 2.8
 		windup_time = 0.8
-		warn_color = Color(0.6, 1.0, 0.2)
+		base_warn_color = Color(0.6, 1.0, 0.2)
+		warn_color = base_warn_color
+
+
+static func _get_shadow_texture() -> ImageTexture:
+	if shadow_texture == null:
+		var size := 64
+		var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
+
+		for y in size:
+			for x in size:
+				var dx := (x + 0.5) / size * 2.0 - 1.0
+				var dy := (y + 0.5) / size * 2.0 - 1.0
+				var strength := clampf(1.0 - sqrt(dx * dx + dy * dy), 0.0, 1.0)
+				image.set_pixel(x, y, Color(0, 0, 0, strength * strength * 0.6))
+
+		shadow_texture = ImageTexture.create_from_image(image)
+
+	return shadow_texture
+
+
+func _build_shadow() -> void:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.1, 1.1)
+
+	shadow_material = StandardMaterial3D.new()
+	shadow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	shadow_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	shadow_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	shadow_material.albedo_texture = _get_shadow_texture()
+
+	shadow = MeshInstance3D.new()
+	shadow.name = "Shadow"
+	shadow.mesh = quad
+	shadow.material_override = shadow_material
+	shadow.rotation_degrees = Vector3(-90, 0, 0)
+	shadow.position = Vector3(0, 0.012, 0)
+	add_child(shadow)
+
+
+func _play_spawn() -> void:
+	spawn_timer = 0.5
+	model_pivot.scale = base_model_scale * 0.05
+	shadow.scale = Vector3.ONE * 0.1
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(model_pivot, "scale", base_model_scale, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(shadow, "scale", Vector3.ONE * base_model_scale.x, 0.45)
+
+	CombatFX.spawn_effect(global_position, kind == "costaud")
+	GameAudio.play_sfx("spawn", global_position + Vector3(0, 0.5, 0), -3.0)
 
 
 func _collect_meshes(node: Node) -> void:

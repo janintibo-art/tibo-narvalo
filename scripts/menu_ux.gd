@@ -37,6 +37,19 @@ var gaze_hold := 0.0
 var activate_cooldown := 0.0
 var was_menu := false
 
+const END_DELAY := 1.2
+
+var end_root: Node3D
+var end_buttons: Array[Area3D] = []
+var end_record_flag: Label3D
+var end_score_label: Label3D
+var end_stats_label: Label3D
+var end_hint_label: Label3D
+var was_end := false
+var was_end_visible := false
+var end_timer := 0.0
+var end_visible := false
+
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -46,7 +59,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_try_bind()
 
-	if main == null or xr_camera == null or ui_root == null:
+	if main == null or xr_camera == null or ui_root == null or end_root == null:
 		return
 
 	var state_value = main.get("game_state")
@@ -55,27 +68,42 @@ func _process(delta: float) -> void:
 
 	var state := String(state_value)
 	var menu_active := state == "menu"
+	var end_active := state == "game_over"
 
 	if menu_active and not was_menu:
 		_on_menu_opened()
 
+	if end_active and not was_end:
+		_on_end_opened()
+
+	if end_active:
+		end_timer = maxf(0.0, end_timer - delta)
+
+	end_visible = end_active and end_timer <= 0.0
+
+	if end_visible and not was_end_visible:
+		_show_end_panel()
+
 	ui_root.visible = menu_active
+	end_root.visible = end_visible
 
 	if reticle:
-		reticle.visible = menu_active
+		reticle.visible = menu_active or end_visible
 
-	if not menu_active:
+	if menu_active or end_visible:
+		_hide_legacy_menu()
+		_recenter_if_lost()
+		_update_interaction(delta)
+	else:
 		_set_laser(left_laser, false, 0.0)
 		_set_laser(right_laser, false, 0.0)
 		_reset_hover()
 		left_was_pressed = false
 		right_was_pressed = false
-	else:
-		_hide_legacy_menu()
-		_recenter_if_lost()
-		_update_interaction(delta)
 
 	was_menu = menu_active
+	was_end = end_active
+	was_end_visible = end_visible
 
 
 func _try_bind() -> void:
@@ -101,6 +129,9 @@ func _try_bind() -> void:
 
 	if ui_root == null:
 		_build_ui()
+
+	if end_root == null:
+		_build_end_ui()
 
 	if left_laser == null and left_hand:
 		left_laser = _create_laser(Color(0.20, 0.80, 1.0))
@@ -172,7 +203,64 @@ func _build_ui() -> void:
 	_update_instruction()
 
 
-func _add_bar(pos: Vector3, size: Vector3, color: Color) -> void:
+func _build_end_ui() -> void:
+	end_root = Node3D.new()
+	end_root.name = "EndScreen"
+	get_tree().current_scene.add_child(end_root)
+	end_root.visible = false
+
+	var panel := MeshInstance3D.new()
+	panel.name = "Panel"
+	var panel_mesh := BoxMesh.new()
+	panel_mesh.size = Vector3(2.05, 1.52, 0.035)
+	panel.mesh = panel_mesh
+
+	var panel_mat := StandardMaterial3D.new()
+	panel_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	panel_mat.albedo_color = Color(0.05, 0.03, 0.04, 0.9)
+	panel_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	panel.material_override = panel_mat
+	end_root.add_child(panel)
+
+	_add_bar(Vector3(0, 0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.25, 0.20), end_root)
+	_add_bar(Vector3(0, -0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.56, 0.10), end_root)
+
+	var title := _make_label("PARTIE TERMINEE", Vector3(0, 0.56, 0.035), 64, 0.0022)
+	title.outline_size = 8
+	end_root.add_child(title)
+
+	end_record_flag = _make_label("NOUVEAU RECORD !", Vector3(0, 0.40, 0.035), 44, 0.0019)
+	end_record_flag.modulate = Color(1.0, 0.85, 0.2)
+	end_record_flag.visible = false
+	end_root.add_child(end_record_flag)
+
+	end_score_label = _make_label("", Vector3(0, 0.19, 0.035), 90, 0.0024)
+	end_root.add_child(end_score_label)
+
+	end_stats_label = _make_label("", Vector3(0, -0.12, 0.035), 32, 0.0018)
+	end_root.add_child(end_stats_label)
+
+	end_hint_label = _make_label("", Vector3(0, -0.645, 0.04), 20, 0.0015)
+	end_root.add_child(end_hint_label)
+
+	var replay := _make_button("REJOUER", "replay", "replay", Vector3(-0.5, -0.46, 0.055), Vector3(0.8, 0.22, 0.07), Color(0.10, 0.60, 0.22))
+	end_root.add_child(replay)
+	end_buttons.append(replay)
+
+	var home := _make_button("ACCUEIL", "home", "home", Vector3(0.5, -0.46, 0.055), Vector3(0.8, 0.22, 0.07), Color(0.10, 0.45, 0.85))
+	end_root.add_child(home)
+	end_buttons.append(home)
+
+	for button in end_buttons:
+		var mesh := button.get_node_or_null("Mesh") as MeshInstance3D
+
+		if mesh and mesh.material_override is StandardMaterial3D:
+			var material := mesh.material_override as StandardMaterial3D
+			material.albedo_color = (button.get_meta("base_color") as Color).lightened(0.15)
+
+
+func _add_bar(pos: Vector3, size: Vector3, color: Color, root: Node3D = null) -> void:
+	var parent := root if root != null else ui_root
 	var mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = size
@@ -183,7 +271,7 @@ func _add_bar(pos: Vector3, size: Vector3, color: Color) -> void:
 	mat.albedo_color = color
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mesh.material_override = mat
-	ui_root.add_child(mesh)
+	parent.add_child(mesh)
 
 
 func _make_label(text_value: String, pos: Vector3, size: int, px: float) -> Label3D:
@@ -205,6 +293,19 @@ func _add_button(
 	size: Vector3,
 	color: Color
 ) -> void:
+	var area := _make_button(text_value, button_type, value, pos, size, color)
+	ui_root.add_child(area)
+	buttons.append(area)
+
+
+func _make_button(
+	text_value: String,
+	button_type: String,
+	value: String,
+	pos: Vector3,
+	size: Vector3,
+	color: Color
+) -> Area3D:
 	var area := Area3D.new()
 	area.name = "%s_%s" % [button_type, value]
 	area.position = pos
@@ -234,8 +335,7 @@ func _add_button(
 	label.outline_size = 5
 	area.add_child(label)
 
-	ui_root.add_child(area)
-	buttons.append(area)
+	return area
 
 
 func _create_laser(color: Color) -> Node3D:
@@ -342,22 +442,75 @@ func _flat_forward() -> Vector3:
 	return forward.normalized()
 
 
+func _active_root() -> Node3D:
+	return end_root if end_visible else ui_root
+
+
+func _active_buttons() -> Array[Area3D]:
+	return end_buttons if end_visible else buttons
+
+
 func _place_menu() -> void:
-	if ui_root == null or xr_camera == null:
+	var root := _active_root()
+
+	if root == null or xr_camera == null:
 		return
 
 	var forward := _flat_forward()
 	var target_position := xr_camera.global_position + forward * MENU_DISTANCE
 	target_position.y = xr_camera.global_position.y - 0.12
 
-	ui_root.global_position = target_position
+	root.global_position = target_position
 
 	var away := target_position + forward
-	ui_root.look_at(away, Vector3.UP)
+	root.look_at(away, Vector3.UP)
+
+
+func _on_end_opened() -> void:
+	end_timer = END_DELAY
+	activate_cooldown = END_DELAY + 1.0
+	_fill_end_stats()
+
+
+func _show_end_panel() -> void:
+	_fill_end_stats()
+	_place_menu()
+
+	var hud = main.get("health_hud")
+
+	if hud is Label3D:
+		(hud as Label3D).visible = false
+
+	var stats = main.get("end_stats")
+
+	if stats is Dictionary and bool(stats.get("new_record", false)):
+		GameAudio.play_sfx("record")
+
+
+func _fill_end_stats() -> void:
+	var stats = main.get("end_stats")
+
+	if not stats is Dictionary:
+		return
+
+	var seconds := int(stats.get("seconds", 0))
+
+	end_score_label.text = "SCORE  %d" % int(stats.get("score", 0))
+	end_record_flag.visible = bool(stats.get("new_record", false))
+	end_stats_label.text = "VAGUE %d     KO %d\nMEILLEUR COMBO x%d     DUREE %d:%02d\nRECORD : %d  (vague %d)" % [
+		int(stats.get("wave", 0)),
+		int(stats.get("kos", 0)),
+		int(stats.get("best_combo", 0)),
+		seconds / 60,
+		seconds % 60,
+		int(stats.get("record_score", 0)),
+		int(stats.get("record_wave", 0))
+	]
 
 
 func _recenter_if_lost() -> void:
-	var to_menu := ui_root.global_position - xr_camera.global_position
+	var root := _active_root()
+	var to_menu := root.global_position - xr_camera.global_position
 	to_menu.y = 0.0
 
 	if to_menu.length_squared() < 0.01:
@@ -440,7 +593,7 @@ func _laser_hit(controller: XRController3D) -> Dictionary:
 	var direction := -controller.global_transform.basis.z.normalized()
 	var best := LASER_MAX
 
-	for button in buttons:
+	for button in _active_buttons():
 		var size_value = button.get_meta("button_size")
 
 		if not size_value is Vector3:
@@ -453,7 +606,7 @@ func _laser_hit(controller: XRController3D) -> Dictionary:
 			result["button"] = button
 
 	if result["button"] == null:
-		var panel_hit := _ray_box_distance(ui_root, Vector3(2.05, 1.52, 0.035), origin, direction)
+		var panel_hit := _ray_box_distance(_active_root(), Vector3(2.05, 1.52, 0.035), origin, direction)
 
 		if panel_hit >= 0.0:
 			best = panel_hit
@@ -510,7 +663,7 @@ func _find_gaze_button() -> Area3D:
 	var best_button: Area3D
 	var best_dot := 0.990
 
-	for button in buttons:
+	for button in _active_buttons():
 		var to_button := button.global_position - xr_camera.global_position
 		var distance := to_button.length()
 
@@ -555,12 +708,16 @@ func _update_instruction() -> void:
 	if instruction_label == null:
 		return
 
+	var text_value := "Vise avec la manette\npuis appuie sur la gachette"
+
 	if gaze_target != null and hover_target == gaze_target:
 		var progress := mini(100, int((gaze_hold / GAZE_DWELL) * 100.0))
-		instruction_label.text = "Selection %d%%" % progress
-		return
+		text_value = "Selection %d%%" % progress
 
-	instruction_label.text = "Vise avec la manette\npuis appuie sur la gachette"
+	instruction_label.text = text_value
+
+	if end_hint_label:
+		end_hint_label.text = text_value.replace("\n", " ")
 
 
 func _try_activate(button: Area3D) -> void:
@@ -599,12 +756,26 @@ func _activate_button(button: Area3D) -> void:
 		_reset_hover()
 		main.call("_start_game")
 
+	elif button_type == "replay":
+		_reset_hover()
+		main.call("_replay")
+
+	elif button_type == "home":
+		_reset_hover()
+		main.call("_go_home")
+
 
 func _refresh_selection() -> void:
 	if status_label:
-		status_label.text = "MODE : %s\nDIFFICULTE : %s" % [
+		var record := 0
+
+		if main != null and main.has_method("get_record_score"):
+			record = int(main.call("get_record_score", selected_mode, selected_difficulty))
+
+		status_label.text = "MODE : %s\nDIFFICULTE : %s\nRECORD : %d" % [
 			selected_mode.to_upper(),
-			selected_difficulty.to_upper()
+			selected_difficulty.to_upper(),
+			record
 		]
 
 	for button in buttons:

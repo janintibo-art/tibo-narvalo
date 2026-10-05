@@ -155,16 +155,70 @@ func _ensure_overlay() -> void:
 	cam.add_child(hurt_overlay)
 
 
-func _spawn_burst(scene: Node, pos: Vector3, amount: int, speed: float, color: Color, size: float) -> void:
+func spawn_effect(pos: Vector3, big: bool = false) -> void:
+	var scene := get_tree().current_scene
+
+	if scene == null:
+		return
+
+	var floor_pos := Vector3(pos.x, pos.y + 0.03, pos.z)
+
+	_spawn_burst(
+		scene,
+		floor_pos + Vector3(0, 0.1, 0),
+		34 if big else 22,
+		0.9,
+		Color(0.65, 0.5, 0.8, 0.7),
+		0.05,
+		0.9,
+		Vector3(0, 0.35, 0),
+		55.0
+	)
+
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 0.30
+	torus.outer_radius = 0.36
+	ring.mesh = torus
+
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.albedo_color = Color(0.7, 0.45, 1.0, 0.7)
+	ring.material_override = material
+
+	scene.add_child(ring)
+	ring.global_position = floor_pos
+	ring.scale = Vector3.ONE * 0.3
+
+	var target_scale := 3.2 if big else 2.4
+	var tween := ring.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(ring, "scale", Vector3.ONE * target_scale, 0.5).set_ease(Tween.EASE_OUT)
+	tween.tween_property(material, "albedo_color:a", 0.0, 0.5)
+	tween.chain().tween_callback(ring.queue_free)
+
+
+func _spawn_burst(
+	scene: Node,
+	pos: Vector3,
+	amount: int,
+	speed: float,
+	color: Color,
+	size: float,
+	lifetime: float = 0.5,
+	gravity: Vector3 = Vector3(0, -3.5, 0),
+	spread: float = 180.0
+) -> void:
 	var particles := CPUParticles3D.new()
 	particles.one_shot = true
 	particles.emitting = false
 	particles.amount = amount
-	particles.lifetime = 0.5
+	particles.lifetime = lifetime
 	particles.explosiveness = 1.0
 	particles.direction = Vector3.UP
-	particles.spread = 180.0
-	particles.gravity = Vector3(0, -3.5, 0)
+	particles.spread = spread
+	particles.gravity = gravity
 	particles.initial_velocity_min = speed * 0.5
 	particles.initial_velocity_max = speed
 	particles.scale_amount_min = 0.6
@@ -192,7 +246,7 @@ func _spawn_burst(scene: Node, pos: Vector3, amount: int, speed: float, color: C
 	particles.global_position = pos
 	particles.emitting = true
 
-	get_tree().create_timer(1.2).timeout.connect(particles.queue_free)
+	get_tree().create_timer(lifetime + 0.7).timeout.connect(particles.queue_free)
 
 
 func _spawn_number(scene: Node, pos: Vector3, damage: int, strong: bool, shovel: bool) -> void:

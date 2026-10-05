@@ -60,6 +60,16 @@ var held_beer := {"left": null, "right": null}
 var drink_timer := {"left": 0.0, "right": 0.0}
 var beer_hint_shown := false
 
+const DUCK_DROP := 0.25
+const RECORDS_PATH := "user://tibo_records.cfg"
+
+var stand_y := 0.0
+var ducking := false
+var best_combo := 0
+var run_start_ms := 0
+var end_stats := {}
+var records := {}
+
 var menu_root: Node3D
 var menu_status: Label3D
 var shovel_root: Node3D
@@ -79,6 +89,7 @@ var beer_scenes: Array[PackedScene] = []
 
 func _ready() -> void:
 	randomize()
+	_load_records()
 
 	left_hit_area.collision_mask = 3
 	right_hit_area.collision_mask = 3
@@ -458,6 +469,11 @@ func _start_game() -> void:
 
 	GameAudio.play_sfx("start")
 
+	stand_y = xr_camera.global_position.y
+	ducking = false
+	best_combo = 0
+	run_start_ms = Time.get_ticks_msec()
+
 	guard_hold = 0.0
 	guarding = false
 	_clear_pickups()
@@ -612,9 +628,11 @@ func _physics_process(delta: float) -> void:
 		exit_hold = 0.0
 		guard_hold = 0.0
 		guarding = false
+		ducking = false
 		return
 
 	_update_guard(delta)
+	_update_duck(delta)
 	_play_swing_sounds()
 	_process_hits()
 	_process_pickups(delta)
@@ -623,6 +641,21 @@ func _physics_process(delta: float) -> void:
 
 func is_guarding() -> bool:
 	return guarding and game_state == "playing"
+
+
+func is_ducking() -> bool:
+	return ducking and game_state == "playing"
+
+
+func _update_duck(delta: float) -> void:
+	var head_y := xr_camera.global_position.y
+
+	if head_y > stand_y:
+		stand_y = lerpf(stand_y, head_y, minf(1.0, 6.0 * delta))
+	else:
+		stand_y = maxf(stand_y - 0.01 * delta, head_y)
+
+	ducking = head_y < stand_y - DUCK_DROP
 
 
 func reduced_damage(damage: int) -> int:
@@ -792,8 +825,9 @@ func _land_hit(
 	is_shovel: bool
 ) -> void:
 	var power := clampf(speed / 3.0, 0.5, 1.6)
-	var damage := maxi(1, int(round(base_damage * power)))
-	var strong := power >= 1.15
+	var multiplier := enemy.damage_multiplier()
+	var damage := maxi(1, int(round(base_damage * power * multiplier)))
+	var strong := power * multiplier >= 1.15
 
 	enemy.take_hit(damage, power)
 
@@ -823,6 +857,7 @@ func _register_combo() -> void:
 		combo = 1
 
 	last_hit_time = now
+	best_combo = maxi(best_combo, combo)
 
 	if combo >= 2:
 		GameFeedback.show_combo(combo)
@@ -1098,6 +1133,8 @@ func _game_over() -> void:
 
 	game_over = true
 	game_state = "game_over"
+	guarding = false
+	ducking = false
 
 	shovel_hit_area.set_deferred("monitoring", false)
 	left_hit_area.set_deferred("monitoring", false)
@@ -1106,14 +1143,75 @@ func _game_over() -> void:
 	_clear_tibos()
 
 	health_hud.visible = true
-	health_hud.text = "LES TIBO T'ONT EU !\nRetour au menu..."
+	health_hud.text = "LES TIBO T'ONT EU !"
 	GameAudio.play_sfx("gameover")
 
-	var serial := run_serial
-	await get_tree().create_timer(3.0).timeout
+	_finish_run()
 
-	if serial == run_serial and game_state == "game_over":
-		_show_menu()
+
+func _finish_run() -> void:
+	var final_score := int(GameFeedback.score)
+	var kos := int(GameFeedback.ko_count)
+	var suffix := "%s_%s" % [selected_mode, selected_difficulty]
+	var old_score := int(records.get("score_" + suffix, 0))
+	var old_wave := int(records.get("wave_" + suffix, 0))
+	var new_record := final_score > old_score
+
+	if new_record:
+		records["score_" + suffix] = final_score
+
+	if wave > old_wave:
+		records["wave_" + suffix] = wave
+
+	if new_record or wave > old_wave:
+		_save_records()
+
+	end_stats = {
+		"score": final_score,
+		"kos": kos,
+		"wave": wave,
+		"best_combo": best_combo,
+		"seconds": int((Time.get_ticks_msec() - run_start_ms) / 1000),
+		"record_score": maxi(old_score, final_score),
+		"record_wave": maxi(old_wave, wave),
+		"new_record": new_record
+	}
+
+
+func _replay() -> void:
+	if game_state != "game_over":
+		return
+
+	game_state = "menu"
+	_start_game()
+
+
+func get_record_score(mode_name: String, difficulty_name: String) -> int:
+	return int(records.get("score_%s_%s" % [mode_name, difficulty_name], 0))
+
+
+func _load_records() -> void:
+	records = {}
+
+	var config := ConfigFile.new()
+
+	if config.load(RECORDS_PATH) != OK:
+		return
+
+	if not config.has_section("records"):
+		return
+
+	for key in config.get_section_keys("records"):
+		records[key] = int(config.get_value("records", key, 0))
+
+
+func _save_records() -> void:
+	var config := ConfigFile.new()
+
+	for key in records:
+		config.set_value("records", String(key), int(records[key]))
+
+	config.save(RECORDS_PATH)
 
 
 func _spawn_beers() -> void:

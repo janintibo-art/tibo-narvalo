@@ -9,7 +9,8 @@ const POOL_3D := 10
 const SOUND_NAMES := [
 	"click", "start", "back", "punch", "punch_strong", "shovel", "whoosh",
 	"hurt", "windup", "ko", "wave", "boss", "gameover", "combo",
-	"block", "guard", "grab", "drink", "glass", "heal"
+	"block", "guard", "grab", "drink", "glass", "heal",
+	"spawn", "alert", "record"
 ]
 
 var sounds: Dictionary = {}
@@ -373,5 +374,38 @@ func _make_glass() -> AudioStreamWAV:
 			ring += sin(TAU * float(tinkle[1]) * tl) * exp(-tl * float(tinkle[2])) * 0.25
 
 		out[i] = tanh(crash * 1.2 + ring) * 0.75
+
+	return _build(out)
+
+
+func _make_alert() -> AudioStreamWAV:
+	return _melody([1100.0, 1100.0], 0.09, 0.26, 18.0, 0.5)
+
+
+func _make_record() -> AudioStreamWAV:
+	return _melody([523.0, 659.0, 784.0, 1047.0], 0.12, 1.0, 4.0, 0.3)
+
+
+func _make_spawn() -> AudioStreamWAV:
+	var duration := 0.5
+	var pop_time := 0.42
+	var out := _buffer(duration)
+	var phase := 0.0
+	var lp := 0.0
+
+	for i in out.size():
+		var t := float(i) / RATE
+		var k := t / duration
+		phase += TAU * (50.0 + 140.0 * k) / RATE
+		lp += (rng.randf_range(-1.0, 1.0) - lp) * (0.05 + 0.3 * k)
+
+		var env := pow(t / pop_time, 2.0) if t < pop_time else exp(-(t - pop_time) * 40.0)
+		var body := (sin(phase) * 0.8 + lp * 1.5) * env
+		var pop := 0.0
+
+		if t >= pop_time:
+			pop = sin(TAU * 160.0 * (t - pop_time)) * exp(-(t - pop_time) * 30.0) * 0.6
+
+		out[i] = tanh((body + pop) * 1.4) * 0.7
 
 	return _build(out)
