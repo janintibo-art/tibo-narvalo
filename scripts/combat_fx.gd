@@ -70,9 +70,9 @@ func float_text(pos: Vector3, text: String, color: Color, size: int) -> void:
 	label.text = text
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.pixel_size = 0.0012
-	label.font_size = size
-	label.outline_size = 12
+	label.pixel_size = 0.0006
+	label.font_size = size * 2
+	label.outline_size = 24
 	label.outline_modulate = Color(0.0, 0.1, 0.0)
 	label.modulate = color
 
@@ -254,18 +254,18 @@ func _spawn_number(scene: Node, pos: Vector3, damage: int, strong: bool, shovel:
 	label.text = "%d" % damage
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.pixel_size = 0.0012
-	label.font_size = 64
-	label.outline_size = 12
+	label.pixel_size = 0.0006
+	label.font_size = 128
+	label.outline_size = 24
 	label.outline_modulate = Color(0.1, 0.0, 0.0)
 	label.modulate = Color(1.0, 0.95, 0.6)
 
 	if shovel:
-		label.font_size = 90
+		label.font_size = 180
 		label.modulate = Color(0.8, 0.92, 1.0)
 		label.text = "%d!" % damage
 	elif strong:
-		label.font_size = 90
+		label.font_size = 180
 		label.modulate = Color(1.0, 0.5, 0.1)
 		label.text = "%d!" % damage
 

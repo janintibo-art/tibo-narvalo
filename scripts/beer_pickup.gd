@@ -94,9 +94,9 @@ func _build_visual() -> void:
 	tag.text = "BIERE +%d" % heal_amount
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	tag.no_depth_test = true
-	tag.pixel_size = 0.0012
-	tag.font_size = 44
-	tag.outline_size = 10
+	tag.pixel_size = 0.0006
+	tag.font_size = 88
+	tag.outline_size = 20
 	tag.modulate = Color(0.45, 1.0, 0.5)
 	tag.position = Vector3(0, 0.32, 0)
 	add_child(tag)

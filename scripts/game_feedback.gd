@@ -123,9 +123,9 @@ func _make_hud_label(label_name: String, pos: Vector3, size: int) -> Label3D:
 	var label := Label3D.new()
 	label.name = label_name
 	label.position = pos
-	label.font_size = size
-	label.pixel_size = 0.001
-	label.outline_size = 8
+	label.font_size = size * 2
+	label.pixel_size = 0.0005
+	label.outline_size = 16
 	label.no_depth_test = true
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.text = ""

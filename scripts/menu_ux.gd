@@ -19,6 +19,8 @@ var right_hand: XRController3D
 
 var ui_root: Node3D
 var status_label: Label3D
+var title_label: Label3D
+var anim_time := 0.0
 var instruction_label: Label3D
 var reticle: Label3D
 
@@ -90,6 +92,12 @@ func _process(delta: float) -> void:
 	if reticle:
 		reticle.visible = menu_active or end_visible
 
+	anim_time += delta
+
+	if menu_active and title_label != null:
+		var pulse := 1.0 + 0.025 * sin(anim_time * 2.2)
+		title_label.scale = Vector3(pulse, pulse, 1.0)
+
 	if menu_active or end_visible:
 		_hide_legacy_menu()
 		_recenter_if_lost()
@@ -146,9 +154,9 @@ func _try_bind() -> void:
 		reticle.name = "MenuReticle"
 		reticle.text = "+"
 		reticle.position = Vector3(0, 0, -1.0)
-		reticle.font_size = 28
-		reticle.pixel_size = 0.0015
-		reticle.outline_size = 5
+		reticle.font_size = 56
+		reticle.pixel_size = 0.00075
+		reticle.outline_size = 10
 		reticle.no_depth_test = true
 		reticle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		reticle.visible = false
@@ -169,17 +177,29 @@ func _build_ui() -> void:
 
 	var panel_mat := StandardMaterial3D.new()
 	panel_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	panel_mat.albedo_color = Color(0.025, 0.035, 0.055, 0.88)
+	panel_mat.albedo_color = Color(1, 1, 1, 0.92)
+	panel_mat.albedo_texture = _gradient_texture(Color(0.03, 0.10, 0.20), Color(0.14, 0.05, 0.22))
 	panel_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	panel.material_override = panel_mat
 	ui_root.add_child(panel)
 
 	_add_bar(Vector3(0, 0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(0.15, 0.65, 1.0))
 	_add_bar(Vector3(0, -0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.56, 0.10))
+	_add_bar(Vector3(-0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(0.15, 0.65, 1.0))
+	_add_bar(Vector3(0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(1.0, 0.56, 0.10))
+	_add_bar(Vector3(0, 0.34, 0.03), Vector3(1.80, 0.006, 0.01), Color(0.35, 0.45, 0.65))
+
+	var title_shadow := _make_label("TIBO NARVALO", Vector3(0.012, 0.548, 0.030), 64, 0.0022)
+	title_shadow.modulate = Color(0, 0, 0, 0.7)
+	title_shadow.outline_size = 0
+	ui_root.add_child(title_shadow)
 
 	var title := _make_label("TIBO NARVALO", Vector3(0, 0.56, 0.035), 64, 0.0022)
-	title.outline_size = 8
+	title.outline_size = 18
+	title.modulate = Color(1.0, 0.93, 0.62)
+	title.outline_modulate = Color(0.45, 0.15, 0.02, 1.0)
 	ui_root.add_child(title)
+	title_label = title
 
 	ui_root.add_child(_make_label("REALITE MIXTE - QUEST 3", Vector3(0, 0.43, 0.035), 32, 0.0018))
 	ui_root.add_child(_make_label("MODE", Vector3(-0.72, 0.27, 0.035), 30, 0.0018))
@@ -217,7 +237,8 @@ func _build_end_ui() -> void:
 
 	var panel_mat := StandardMaterial3D.new()
 	panel_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	panel_mat.albedo_color = Color(0.05, 0.03, 0.04, 0.9)
+	panel_mat.albedo_color = Color(1, 1, 1, 0.93)
+	panel_mat.albedo_texture = _gradient_texture(Color(0.20, 0.04, 0.05), Color(0.08, 0.03, 0.14))
 	panel_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	panel.material_override = panel_mat
 	end_root.add_child(panel)
@@ -225,8 +246,13 @@ func _build_end_ui() -> void:
 	_add_bar(Vector3(0, 0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.25, 0.20), end_root)
 	_add_bar(Vector3(0, -0.71, 0.025), Vector3(1.92, 0.025, 0.025), Color(1.0, 0.56, 0.10), end_root)
 
+	_add_bar(Vector3(-0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(1.0, 0.25, 0.20), end_root)
+	_add_bar(Vector3(0.985, 0, 0.025), Vector3(0.025, 1.40, 0.025), Color(1.0, 0.56, 0.10), end_root)
+
 	var title := _make_label("PARTIE TERMINEE", Vector3(0, 0.56, 0.035), 64, 0.0022)
-	title.outline_size = 8
+	title.outline_size = 18
+	title.modulate = Color(1.0, 0.85, 0.80)
+	title.outline_modulate = Color(0.35, 0.02, 0.02, 1.0)
 	end_root.add_child(title)
 
 	end_record_flag = _make_label("NOUVEAU RECORD !", Vector3(0, 0.40, 0.035), 44, 0.0019)
@@ -259,6 +285,21 @@ func _build_end_ui() -> void:
 			material.albedo_color = (button.get_meta("base_color") as Color).lightened(0.15)
 
 
+func _gradient_texture(top: Color, bottom: Color) -> GradientTexture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, top)
+	gradient.set_color(1, bottom)
+
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.fill = GradientTexture2D.FILL_LINEAR
+	texture.fill_from = Vector2(0.5, 0.0)
+	texture.fill_to = Vector2(0.5, 1.0)
+	texture.width = 8
+	texture.height = 128
+	return texture
+
+
 func _add_bar(pos: Vector3, size: Vector3, color: Color, root: Node3D = null) -> void:
 	var parent := root if root != null else ui_root
 	var mesh := MeshInstance3D.new()
@@ -278,9 +319,10 @@ func _make_label(text_value: String, pos: Vector3, size: int, px: float) -> Labe
 	var label := Label3D.new()
 	label.text = text_value
 	label.position = pos
-	label.font_size = size
-	label.pixel_size = px
-	label.outline_size = 6
+	label.font_size = size * 2
+	label.pixel_size = px * 0.5
+	label.outline_size = 12
+	label.outline_modulate = Color(0.02, 0.04, 0.10, 1.0)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return label
 
@@ -326,13 +368,16 @@ func _make_button(
 
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
-	mat.metallic = 0.12
-	mat.roughness = 0.34
+	mat.metallic = 0.0
+	mat.roughness = 0.5
+	mat.emission_enabled = true
+	mat.emission = color
+	mat.emission_energy_multiplier = 0.35
 	mesh.material_override = mat
 	area.add_child(mesh)
 
 	var label := _make_label(text_value, Vector3(0, 0, size.z * 0.52 + 0.004), 34, 0.0019)
-	label.outline_size = 5
+	label.outline_size = 10
 	area.add_child(label)
 
 	return area
@@ -812,4 +857,6 @@ func _refresh_selection() -> void:
 			material.emission_energy_multiplier = 0.9
 		else:
 			material.albedo_color = color.darkened(0.25)
-			material.emission_enabled = false
+			material.emission_enabled = true
+			material.emission = color
+			material.emission_energy_multiplier = 0.3
