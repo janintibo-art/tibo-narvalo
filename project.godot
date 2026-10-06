@@ -12,6 +12,7 @@ ThreatRadar="*res://scripts/threat_radar.gd"
 GameFeedback="*res://scripts/game_feedback.gd"
 BossDirector="*res://scripts/boss_director.gd"
 MenuUX="*res://scripts/menu_ux.gd"
+BerniArsenal="*res://scripts/berni_arsenal.gd"
 
 [display]
 
