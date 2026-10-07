@@ -28,6 +28,15 @@ var gaze_target: Area3D
 var gaze_hold := 0.0
 var activate_cooldown := 0.0
 var was_menu := false
+var settle_timer := 0.0
+var left_beam: MeshInstance3D
+var right_beam: MeshInstance3D
+var left_was_pressed := false
+var right_was_pressed := false
+var pointed_by_hand := false
+const MENU_DISTANCE := 1.95
+const DWELL_TIME := 0.90
+const POINT_DWELL := 0.60
 
 
 func _ready() -> void:
@@ -55,7 +64,7 @@ func _process(delta: float) -> void:
 		reticle.visible = menu_active
 	if menu_active:
 		_hide_legacy_menu()
-		_place_menu()
+		_keep_menu_in_view(delta)
 		_update_interaction(delta)
 	else:
 		_reset_gaze()
@@ -80,9 +89,13 @@ func _try_bind() -> void:
 	if left_marker == null and left_hand:
 		left_marker = _create_hand_marker(Color(0.16, 0.80, 1.0))
 		left_hand.add_child(left_marker)
+		left_beam = _create_beam(Color(0.16, 0.80, 1.0))
+		left_marker.add_child(left_beam)
 	if right_marker == null and right_hand:
 		right_marker = _create_hand_marker(Color(1.0, 0.58, 0.12))
 		right_hand.add_child(right_marker)
+		right_beam = _create_beam(Color(1.0, 0.58, 0.12))
+		right_marker.add_child(right_beam)
 	if reticle == null:
 		reticle = Label3D.new()
 		reticle.name = "MenuReticle"
@@ -132,7 +145,7 @@ func _build_ui() -> void:
 	ui_root.add_child(description_label)
 
 	_add_button("LANCER LA PARTIE", BUTTON_START, "start", Vector3(0, -0.68, 0.085), Vector3(1.05, 0.22, 0.08), Color(0.50, 0.16, 0.86))
-	instruction_label = _make_label("Regarde un bouton 1 seconde  •  ou touche-le", Vector3(0, -0.86, 0.07), 17, 0.00235)
+	instruction_label = _make_label("Vise avec la manette + gachette  •  ou regarde 1 seconde", Vector3(0, -0.86, 0.07), 17, 0.00235)
 	instruction_label.modulate = Color(0.86, 0.93, 1.0)
 	ui_root.add_child(instruction_label)
 	_refresh_selection()
@@ -261,7 +274,34 @@ func _create_hand_marker(color: Color) -> MeshInstance3D:
 	return marker
 
 
+func _create_beam(color: Color) -> MeshInstance3D:
+	var beam := MeshInstance3D.new()
+	beam.name = "MenuBeam"
+	var cylinder := CylinderMesh.new()
+	cylinder.height = 1.0
+	cylinder.top_radius = 0.003
+	cylinder.bottom_radius = 0.003
+	cylinder.radial_segments = 6
+	cylinder.rings = 1
+	beam.mesh = cylinder
+	beam.rotation_degrees = Vector3(90, 0, 0)
+	beam.position = Vector3(0, 0, -0.75)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	beam.material_override = mat
+	return beam
+
+
+func _set_beam_length(beam: MeshInstance3D, length: float) -> void:
+	if beam == null:
+		return
+	beam.scale = Vector3(1.0, length, 1.0)
+	beam.position = Vector3(0, 0, -length * 0.5)
+
+
 func _on_menu_opened() -> void:
+	settle_timer = 0.8
 	var mode_value = main.get("selected_mode")
 	var diff_value = main.get("selected_difficulty")
 	if mode_value != null:
@@ -294,30 +334,61 @@ func _disable_legacy_areas(node: Node) -> void:
 		_disable_legacy_areas(child)
 
 
-func _place_menu() -> void:
-	if ui_root == null or xr_camera == null:
-		return
+func _flat_forward() -> Vector3:
 	var forward := -xr_camera.global_transform.basis.z
 	forward.y = 0.0
 	if forward.length_squared() < 0.01:
-		forward = Vector3.FORWARD
-	else:
-		forward = forward.normalized()
-	var target_position := xr_camera.global_position + forward * 1.95
+		return Vector3.FORWARD
+	return forward.normalized()
+
+
+func _place_menu() -> void:
+	if ui_root == null or xr_camera == null:
+		return
+	var forward := _flat_forward()
+	var target_position := xr_camera.global_position + forward * MENU_DISTANCE
 	target_position.y = xr_camera.global_position.y - 0.06
 	ui_root.global_position = target_position
-	var look_target := xr_camera.global_position
-	look_target.y = target_position.y
-	ui_root.look_at(look_target, Vector3.UP)
+	# +Z du menu doit regarder le joueur : on vise un point derriere le menu.
+	ui_root.look_at(target_position + forward, Vector3.UP)
+
+
+func _keep_menu_in_view(delta: float) -> void:
+	if settle_timer > 0.0:
+		settle_timer -= delta
+		_place_menu()
+		return
+	var to_menu := ui_root.global_position - xr_camera.global_position
+	var flat := Vector3(to_menu.x, 0.0, to_menu.z)
+	if flat.length() > 3.4 or flat.length() < 0.8:
+		_place_menu()
+		return
+	if flat.normalized().dot(_flat_forward()) < 0.25:
+		_place_menu()
 
 
 func _update_interaction(delta: float) -> void:
 	activate_cooldown = maxf(0.0, activate_cooldown - delta)
 	var touched := _find_touched_button()
+	var pointed := _find_pointed_button()
+	var trigger_down := _trigger_pressed()
+	var dwell_needed := DWELL_TIME
+
 	if touched != null:
 		_set_gaze_target(touched)
-		gaze_hold = 1.0
+		gaze_hold = DWELL_TIME
+		pointed_by_hand = false
+	elif pointed != null:
+		pointed_by_hand = true
+		dwell_needed = POINT_DWELL
+		if pointed != gaze_target:
+			_set_gaze_target(pointed)
+			gaze_hold = 0.0
+		gaze_hold += delta
+		if trigger_down and activate_cooldown <= 0.0:
+			gaze_hold = dwell_needed
 	else:
+		pointed_by_hand = false
 		var looked := _find_gaze_button()
 		if looked != gaze_target:
 			_set_gaze_target(looked)
@@ -326,11 +397,78 @@ func _update_interaction(delta: float) -> void:
 			gaze_hold += delta
 		else:
 			gaze_hold = 0.0
-	_update_dwell_feedback()
-	if gaze_target != null and gaze_hold >= 0.90 and activate_cooldown <= 0.0:
+	_update_dwell_feedback(dwell_needed)
+	if gaze_target != null and gaze_hold >= dwell_needed and activate_cooldown <= 0.0:
 		_activate_button(gaze_target)
-		activate_cooldown = 0.55
+		activate_cooldown = 0.6
 		gaze_hold = 0.0
+
+
+func _trigger_pressed() -> bool:
+	var pressed := false
+	var left_now := _hand_trigger(left_hand)
+	var right_now := _hand_trigger(right_hand)
+	if (left_now and not left_was_pressed) or (right_now and not right_was_pressed):
+		pressed = true
+	left_was_pressed = left_now
+	right_was_pressed = right_now
+	return pressed
+
+
+func _hand_trigger(controller: XRController3D) -> bool:
+	if controller == null or not controller.get_is_active():
+		return false
+	return controller.is_button_pressed("trigger_click") or controller.get_float("trigger") > 0.7
+
+
+func _find_pointed_button() -> Area3D:
+	var best: Area3D
+	var best_distance := 99.0
+	var best_hand := ""
+	for entry in [["left", left_hand, left_beam], ["right", right_hand, right_beam]]:
+		var controller := entry[1] as XRController3D
+		var beam := entry[2] as MeshInstance3D
+		if controller == null or not controller.get_is_active():
+			_set_beam_visible(beam, false)
+			continue
+		var origin := controller.global_position
+		var direction := -controller.global_transform.basis.z
+		var hit_distance := 99.0
+		var hit_button: Area3D
+		for button in buttons:
+			var distance := _ray_button_distance(button, origin, direction)
+			if distance > 0.0 and distance < hit_distance:
+				hit_distance = distance
+				hit_button = button
+		_set_beam_visible(beam, true)
+		_set_beam_length(beam, hit_distance if hit_button != null else 1.6)
+		if hit_button != null and hit_distance < best_distance:
+			best_distance = hit_distance
+			best = hit_button
+	return best
+
+
+func _set_beam_visible(beam: MeshInstance3D, value: bool) -> void:
+	if beam != null:
+		beam.visible = value
+
+
+func _ray_button_distance(button: Area3D, origin: Vector3, direction: Vector3) -> float:
+	var size_value = button.get_meta("button_size")
+	if not size_value is Vector3:
+		return -1.0
+	var size := size_value as Vector3
+	var local_origin := button.to_local(origin)
+	var local_direction := button.global_transform.basis.inverse() * direction
+	if absf(local_direction.z) < 0.0001:
+		return -1.0
+	var t := (size.z * 0.5 - local_origin.z) / local_direction.z
+	if t < 0.05 or t > 6.0:
+		return -1.0
+	var point := local_origin + local_direction * t
+	if absf(point.x) <= size.x * 0.55 and absf(point.y) <= size.y * 0.62:
+		return t
+	return -1.0
 
 
 func _find_touched_button() -> Area3D:
@@ -388,13 +526,13 @@ func _reset_gaze() -> void:
 	gaze_hold = 0.0
 
 
-func _update_dwell_feedback() -> void:
+func _update_dwell_feedback(needed: float = DWELL_TIME) -> void:
 	if instruction_label == null:
 		return
 	if gaze_target == null:
-		instruction_label.text = "Regarde un bouton 1 seconde  •  ou touche-le"
+		instruction_label.text = "Vise avec la manette + gachette  •  ou regarde 1 seconde"
 		return
-	var progress := mini(100, int((gaze_hold / 0.90) * 100.0))
+	var progress := mini(100, int((gaze_hold / needed) * 100.0))
 	var value := String(gaze_target.get_meta("value")).to_upper()
 	instruction_label.text = "%s  •  selection %d%%" % [value, progress]
 
